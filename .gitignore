@@ -1,0 +1,8 @@
+.env
+venv/
+__pycache__/
+.DS_Store
+data/raw/
+*.zip
+.ipynb_checkpoints/
+creator-analytics-share.zip
