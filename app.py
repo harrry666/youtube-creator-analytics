@@ -1,16 +1,32 @@
 import re
 import json
 import urllib.parse
-import requests
-import feedparser
+from datetime import date
+
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import requests
+import feedparser
 import streamlit as st
 
-st.set_page_config(page_title="Creator Analytics", layout="wide", page_icon="🎬")
+from src.metrics import (
+    clean_and_validate, calc_composite_score, calc_virality_score,
+    performance_grade, kpi_summary, period_trend,
+)
+from src.anomaly import detect_video_anomalies, detect_quarterly_dips, anomaly_label, ANOMALY_EMOJI
+from src.insights import generate_creator_insights, generate_comparison_insights, insight_block
+from src.recommender import generate_recommendations
 
-# ── creator config ─────────────────────────────────────────────────────────────
+st.set_page_config(
+    page_title="Creator Analytics",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# ── Creator config ─────────────────────────────────────────────────────────────
 CREATORS = {
     "MrBeast":        {"slug": "mrbeast"},
     "Mark Rober":     {"slug": "markrober"},
@@ -29,185 +45,138 @@ CATEGORIES = {
     "Win $": r"win \$|,000",
 }
 
-# ── theme CSS ──────────────────────────────────────────────────────────────────
-YT_CSS = """
-<style>
-.kpi-card {
-    background: #1A1A1A; border: 1px solid #282828; border-radius: 12px;
-    padding: 20px 16px; text-align: center; height: 100%;
-}
-.kpi-label { color: #888; font-size: 0.7rem; text-transform: uppercase;
-             letter-spacing: 1.5px; margin-bottom: 8px; }
-.kpi-value { color: #FF0000; font-size: 2.4rem; font-weight: 900; line-height: 1; }
-.kpi-sub   { color: #555; font-size: 0.75rem; margin-top: 4px; }
-.sec-head  { font-size: 1rem; font-weight: 700; color: #FF0000;
-             border-left: 3px solid #FF0000; padding-left: 10px; margin: 20px 0 10px; }
-.thumb-title { font-size: 0.72rem; color: #aaa; margin-top: 5px; line-height: 1.3;
-               height: 2.4em; overflow: hidden; }
-.thumb-stat  { font-size: 0.78rem; color: #FF0000; font-weight: 700; margin-top: 3px; }
-.insight-box { background: #1A1A1A; border: 1px solid #282828; border-radius: 12px;
-               padding: 20px 24px; margin: 8px 0; }
-.insight-head { color: #FF0000; font-size: 0.8rem; font-weight: 700;
-                text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
-.insight-body { color: #DDDDDD; font-size: 0.95rem; line-height: 1.6; }
-.dip-row { background: #1A1A1A; border: 1px solid #2a2a2a; border-radius: 8px;
-           padding: 12px 16px; margin: 6px 0; }
+TITLE_KEYWORDS = [
+    "$", "win", "subscribe", "survive", "last to", "vs", "guess",
+    "free", "every", "MV", "ft.", "live", "Official", "周杰倫", "演唱會", "林俊傑",
+]
+
+GRADE_COLORS = {"S": "#FFD700", "A": "#22C55E", "B": "#3B82F6", "C": "#F59E0B", "D": "#EF4444"}
+PRIORITY_COLORS = {"HIGH": "#EF4444", "MEDIUM": "#F59E0B", "LOW": "#22C55E"}
+
+
+# ── CSS design system ──────────────────────────────────────────────────────────
+def build_css(ac: str) -> str:
+    return f"""<style>
+[data-testid="stSidebar"] {{
+    background: #0F0F17;
+    border-right: 1px solid #1E1E2E;
+}}
+[data-testid="stSidebar"] .stMarkdown p {{ color: #94A3B8; font-size: 0.8rem; }}
+.kpi-card {{
+    background: #14141C; border: 1px solid #1E1E2E; border-radius: 14px;
+    padding: 20px 16px; text-align: center; height: 100%; min-height: 110px;
+}}
+.kpi-label {{ color: #64748B; font-size: 0.62rem; text-transform: uppercase;
+              letter-spacing: 2px; margin-bottom: 8px; }}
+.kpi-value {{ color: {ac}; font-size: 2.2rem; font-weight: 900; line-height: 1; }}
+.kpi-sub   {{ color: #475569; font-size: 0.7rem; margin-top: 6px; }}
+.kpi-trend-up   {{ color: #22C55E; font-size: 0.7rem; font-weight: 700; margin-top: 4px; }}
+.kpi-trend-down {{ color: #EF4444; font-size: 0.7rem; font-weight: 700; margin-top: 4px; }}
+.kpi-trend-flat {{ color: #64748B; font-size: 0.7rem; margin-top: 4px; }}
+.adv-card {{
+    background: #0F0F17; border: 1px solid #1E1E2E; border-radius: 12px;
+    padding: 16px; text-align: center;
+}}
+.adv-label {{ color: #64748B; font-size: 0.6rem; text-transform: uppercase;
+              letter-spacing: 1.5px; margin-bottom: 6px; }}
+.adv-value {{ color: #E2E8F0; font-size: 1.6rem; font-weight: 800; line-height: 1; }}
+.adv-sub   {{ color: #475569; font-size: 0.65rem; margin-top: 4px; }}
+.sec-head {{
+    font-size: 0.82rem; font-weight: 700; color: {ac};
+    border-left: 3px solid {ac}; padding-left: 10px;
+    margin: 24px 0 12px; text-transform: uppercase; letter-spacing: 1px;
+}}
+.insight-box {{
+    background: #14141C; border: 1px solid #1E1E2E; border-radius: 12px;
+    padding: 18px 22px; margin: 8px 0;
+}}
+.insight-head {{
+    color: {ac}; font-size: 0.65rem; font-weight: 800;
+    text-transform: uppercase; letter-spacing: 2px; margin-bottom: 8px;
+}}
+.insight-body {{ color: #CBD5E1; font-size: 0.9rem; line-height: 1.7; }}
+.rec-card {{
+    background: #14141C; border-left: 4px solid; border-radius: 10px;
+    padding: 16px 20px; margin: 10px 0;
+    border-top: 1px solid #1E1E2E; border-right: 1px solid #1E1E2E; border-bottom: 1px solid #1E1E2E;
+}}
+.rec-priority {{ font-size: 0.62rem; font-weight: 800; text-transform: uppercase; letter-spacing: 2px; }}
+.rec-title   {{ font-size: 0.97rem; font-weight: 700; color: #E2E8F0; margin: 5px 0 4px; }}
+.rec-insight {{ color: #94A3B8; font-size: 0.85rem; margin-bottom: 8px; }}
+.rec-action  {{ color: #CBD5E1; font-size: 0.85rem; }}
+.rec-action::before {{ content: "→ "; color: {ac}; font-weight: 700; }}
+.thumb-title {{ font-size: 0.7rem; color: #94A3B8; margin-top: 6px; line-height: 1.3;
+               height: 2.4em; overflow: hidden; }}
+.thumb-stat  {{ font-size: 0.78rem; color: {ac}; font-weight: 700; margin-top: 3px; }}
+.thumb-badge {{ font-size: 0.65rem; color: #7C3AED; margin-top: 2px; }}
+.dip-row {{
+    background: #14141C; border: 1px solid #1E1E2E; border-radius: 8px;
+    padding: 12px 16px; margin: 6px 0;
+}}
+.badge-ok   {{ background: #14532D; color: #4ADE80; padding: 3px 10px;
+               border-radius: 99px; font-size: 0.65rem; font-weight: 700; }}
+.badge-warn {{ background: #422006; color: #FCD34D; padding: 3px 10px;
+               border-radius: 99px; font-size: 0.65rem; font-weight: 700; }}
+.page-title {{ font-size: 1.7rem; font-weight: 900; color: #E2E8F0; margin: 0; line-height: 1.1; }}
+.page-sub   {{ color: #64748B; font-size: 0.8rem; margin-top: 4px; }}
 </style>"""
 
-SPOTIFY_CSS = """
-<style>
-.kpi-card {
-    border-radius: 16px; padding: 24px 16px; text-align: center;
-    height: 100%; min-height: 110px;
-}
-.kpi-card-0 { background: linear-gradient(135deg, #1DB954, #0a7a35); }
-.kpi-card-1 { background: linear-gradient(135deg, #E91E63, #880E4F); }
-.kpi-card-2 { background: linear-gradient(135deg, #2979FF, #01579B); }
-.kpi-card-3 { background: linear-gradient(135deg, #FF6D00, #BF360C); }
-.kpi-label { color: rgba(255,255,255,0.65); font-size: 0.7rem; text-transform: uppercase;
-             letter-spacing: 1.5px; margin-bottom: 8px; }
-.kpi-value { color: #FFFFFF; font-size: 2.6rem; font-weight: 900; line-height: 1; }
-.kpi-sub   { color: rgba(255,255,255,0.5); font-size: 0.75rem; margin-top: 4px; }
-.sec-head  { font-size: 1rem; font-weight: 700; color: #1DB954;
-             border-left: 3px solid #1DB954; padding-left: 10px; margin: 20px 0 10px; }
-.thumb-title { font-size: 0.72rem; color: #aaa; margin-top: 5px; line-height: 1.3;
-               height: 2.4em; overflow: hidden; }
-.thumb-stat  { font-size: 0.78rem; color: #1DB954; font-weight: 700; margin-top: 3px; }
-.insight-box { background: #1E1E1E; border: 1px solid #2a2a2a; border-radius: 16px;
-               padding: 20px 24px; margin: 8px 0; }
-.insight-head { color: #1DB954; font-size: 0.8rem; font-weight: 700;
-                text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
-.insight-body { color: #DDDDDD; font-size: 0.95rem; line-height: 1.6; }
-.dip-row { background: #1E1E1E; border: 1px solid #2a2a2a; border-radius: 8px;
-           padding: 12px 16px; margin: 6px 0; }
-</style>"""
 
-# ── helpers ────────────────────────────────────────────────────────────────────
-def parse_sec(s):
-    h = re.search(r'(\d+)H', s); m = re.search(r'(\d+)M', s); sec = re.search(r'(\d+)S', s)
-    return (int(h.group(1))*3600 if h else 0)+(int(m.group(1))*60 if m else 0)+(int(sec.group(1)) if sec else 0)
+# ── UI components ──────────────────────────────────────────────────────────────
+def kpi_card(label: str, value: str, sub: str, trend_pct=None) -> str:
+    if trend_pct is None:
+        trend_html = '<div class="kpi-trend-flat">—</div>'
+    elif trend_pct >= 0:
+        trend_html = f'<div class="kpi-trend-up">▲ {abs(trend_pct):.1f}% vs prev 30d</div>'
+    else:
+        trend_html = f'<div class="kpi-trend-down">▼ {abs(trend_pct):.1f}% vs prev 30d</div>'
+    return (f'<div class="kpi-card">'
+            f'<div class="kpi-label">{label}</div>'
+            f'<div class="kpi-value">{value}</div>'
+            f'<div class="kpi-sub">{sub}</div>'
+            f'{trend_html}</div>')
 
-def categorize(title):
+
+def adv_card(label: str, value: str, sub: str, color: str = "#E2E8F0") -> str:
+    return (f'<div class="adv-card">'
+            f'<div class="adv-label">{label}</div>'
+            f'<div class="adv-value" style="color:{color}">{value}</div>'
+            f'<div class="adv-sub">{sub}</div></div>')
+
+
+def rec_card(rec: dict) -> str:
+    p = rec["priority"]
+    color = PRIORITY_COLORS.get(p, "#888")
+    emoji = {"HIGH": "🔴", "MEDIUM": "🟡", "LOW": "🟢"}.get(p, "⚪")
+    return (f'<div class="rec-card" style="border-left-color:{color}">'
+            f'<div class="rec-priority" style="color:{color}">{emoji} {p}</div>'
+            f'<div class="rec-title">{rec["title"]}</div>'
+            f'<div class="rec-insight">{rec["insight"]}</div>'
+            f'<div class="rec-action">{rec["action"]}</div></div>')
+
+
+# ── Data helpers ───────────────────────────────────────────────────────────────
+def parse_sec(s: str) -> int:
+    if not isinstance(s, str):
+        return 0
+    h = re.search(r"(\d+)H", s)
+    m = re.search(r"(\d+)M", s)
+    sec = re.search(r"(\d+)S", s)
+    return ((int(h.group(1)) * 3600 if h else 0)
+            + (int(m.group(1)) * 60 if m else 0)
+            + (int(sec.group(1)) if sec else 0))
+
+
+def categorize(title: str) -> str:
     t = title.lower()
     for label, pat in CATEGORIES.items():
-        if re.search(pat, t): return label
+        if re.search(pat, t):
+            return label
     return "Other"
 
-def kpi_card(label, value, sub, idx, is_music):
-    cls = f"kpi-card kpi-card-{idx}" if is_music else "kpi-card"
-    return f"""<div class="{cls}">
-        <div class="kpi-label">{label}</div>
-        <div class="kpi-value">{value}</div>
-        <div class="kpi-sub">{sub}</div>
-    </div>"""
 
-def insight_block(head, body):
-    return f"""<div class="insight-box">
-        <div class="insight-head">{head}</div>
-        <div class="insight-body">{body}</div>
-    </div>"""
-
-def chart_base(is_music):
-    bg = "#121212" if is_music else "#0F0F0F"
-    card = "#1E1E1E" if is_music else "#1A1A1A"
-    return dict(template="plotly_dark", paper_bgcolor=bg, plot_bgcolor=card,
-                font_color="#FFFFFF", margin=dict(l=0, r=0, t=40, b=0))
-
-def accent(is_music):
-    return "#1DB954" if is_music else "#FF0000"
-
-def generate_insights(da, db, name_a, name_b):
-    avg_a = da["view_count"].mean() / 1e6
-    avg_b = db["view_count"].mean() / 1e6
-    eng_a = da["engagement_rate"].mean() * 100
-    eng_b = db["engagement_rate"].mean() * 100
-    vpd_a = da["views_per_day"].mean() / 1e6
-    vpd_b = db["views_per_day"].mean() / 1e6
-    freq_a = len(da) / max((da["published_at"].max()-da["published_at"].min()).days/90, 1)
-    freq_b = len(db) / max((db["published_at"].max()-db["published_at"].min()).days/90, 1)
-    ratio = avg_a / avg_b if avg_b > 0 else 1
-    slug_a = CREATORS[name_a]["slug"]
-    slug_b = CREATORS[name_b]["slug"]
-    both_music = slug_a in MUSIC_ARTISTS and slug_b in MUSIC_ARTISTS
-
-    blocks = []
-
-    if both_music:
-        big_name, big_avg, big_eng = (name_a, avg_a, eng_a) if avg_a >= avg_b else (name_b, avg_b, eng_b)
-        small_name, s_avg, s_eng = (name_b, avg_b, eng_b) if avg_a >= avg_b else (name_a, avg_a, eng_a)
-        blocks.append(insight_block("CATALOG REACH",
-            f"{big_name}'s catalog averages <b>{big_avg:.1f}M views per video</b>. "
-            f"{small_name} averages <b>{s_avg:.1f}M</b>. "
-            f"That {max(ratio, 1/ratio):.1f}x gap reflects legacy — "
-            f"older catalogs keep accumulating views long after release."))
-        blocks.append(insight_block("FANDOM DEPTH",
-            f"{'Both artists sit around' if abs(eng_a-eng_b)<0.5 else (name_a if eng_a>eng_b else name_b)+' leads at'} "
-            f"<b>{max(eng_a,eng_b):.2f}% engagement</b>. "
-            f"Music fans who comment and like are different from passive streamers — "
-            f"this is the core fanbase that shows up to concerts and buys merch."))
-        blocks.append(insight_block("WHAT TO COPY",
-            f"If you're a music creator: post your MVs, not just lyric videos. "
-            f"Both {name_a} and {name_b} see 2–5x higher engagement on official MVs vs. live footage. "
-            f"Quality of visual production moves the needle more than upload frequency."))
-    else:
-        winner = name_a if avg_a >= avg_b else name_b
-        loser = name_b if avg_a >= avg_b else name_a
-        w_avg = max(avg_a, avg_b); l_avg = min(avg_a, avg_b)
-        w_eng = eng_a if avg_a >= avg_b else eng_b
-        l_eng = eng_b if avg_a >= avg_b else eng_a
-        w_freq = freq_a if avg_a >= avg_b else freq_b
-        l_freq = freq_b if avg_a >= avg_b else freq_a
-
-        blocks.append(insight_block("RAW REACH",
-            f"{winner} averages <b>{w_avg:.1f}M views per video</b>. "
-            f"{loser} averages <b>{l_avg:.1f}M</b>. "
-            f"That's a <b>{max(ratio,1/ratio):.1f}x gap</b> — "
-            f"explained almost entirely by upload cadence and prize budgets, not talent alone."))
-
-        eng_winner = name_a if eng_a >= eng_b else name_b
-        blocks.append(insight_block("ENGAGEMENT",
-            f"{eng_winner} wins on engagement at <b>{max(eng_a,eng_b):.2f}%</b> vs "
-            f"<b>{min(eng_a,eng_b):.2f}%</b>. "
-            f"{'Bigger reach does not mean better engagement — the algorithm rewards views, but your community rewards depth.' if (eng_a>eng_b) != (avg_a>avg_b) else 'Same creator leads on both metrics — that is rare and worth studying.'}"))
-
-        blocks.append(insight_block("POSTING CADENCE",
-            f"{winner} posts <b>~{w_freq:.0f} videos/quarter</b>. "
-            f"{loser} posts <b>~{l_freq:.0f}</b>. "
-            f"{'The algorithm rewards consistency. ' + winner + ' owns the feed by volume alone.' if w_freq > l_freq * 1.5 else 'Similar cadence — the view gap is about content formula, not frequency.'}"))
-
-        blocks.append(insight_block("TAKEAWAY FOR YOU",
-            f"Study <b>{winner}</b> for top-of-funnel reach: short hooks, clear payoff, high frequency. "
-            f"Study <b>{loser}</b> for community: fewer videos, higher craftsmanship, loyal repeat viewers. "
-            f"Pick one strategy and commit — trying to do both usually means doing neither well."))
-
-    return "\n".join(blocks)
-
-@st.cache_data(ttl=3600)
-def fetch_news(query, from_date, to_date):
-    year = str(from_date)[:4]
-    q = urllib.parse.quote(f"{query} {year}")
-    url = f"https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en"
-    headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-               "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
-    try:
-        r = requests.get(url, headers=headers, timeout=10)
-        feed = feedparser.parse(r.content)
-        return [(e.title, e.link, e.get("published", "")) for e in feed.entries[:5]]
-    except Exception:
-        return []
-
-def detect_dips(df, creator_name, threshold=0.35):
-    q = df.groupby("quarter")["view_count"].mean().reset_index()
-    q = q[q["quarter"] >= "2016-01-01"].copy()
-    q["rolling_max"] = q["view_count"].rolling(4, min_periods=2).max().shift(1)
-    q["drop_pct"] = (q["rolling_max"] - q["view_count"]) / q["rolling_max"]
-    dips = q[(q["drop_pct"] > threshold) & q["rolling_max"].notna()].copy()
-    dips["creator"] = creator_name
-    dips["quarter_str"] = dips["quarter"].dt.strftime("%Y-%m")
-    return dips
-
-@st.cache_data
-def load_data(slug):
+@st.cache_data(show_spinner=False)
+def load_and_enrich(slug: str):
     df = pd.read_csv(f"data/processed/{slug}_metrics.csv")
     df["published_at"] = pd.to_datetime(df["published_at"], utc=True).dt.tz_localize(None)
     df["duration_sec"] = df["duration"].apply(parse_sec)
@@ -215,216 +184,442 @@ def load_data(slug):
     df["format"] = df["is_short"].map({True: "Short-form (<2 min)", False: "Long-form (≥2 min)"})
     df["category"] = df["title"].apply(categorize)
     df["quarter"] = df["published_at"].dt.to_period("Q").dt.to_timestamp()
-    return df.sort_values("published_at").reset_index(drop=True)
+    df, warnings = clean_and_validate(df)
+    df["virality_score"] = calc_virality_score(df)
+    df["composite_score"] = calc_composite_score(df)
+    df["grade"] = df["composite_score"].apply(performance_grade)
+    df = detect_video_anomalies(df)
+    return df.sort_values("published_at").reset_index(drop=True), warnings
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_news(query: str, from_date: str, to_date: str):
+    year = str(from_date)[:4]
+    q = urllib.parse.quote(f"{query} {year}")
+    url = f"https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en"
+    try:
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
+        feed = feedparser.parse(r.content)
+        return [(e.title, e.link, e.get("published", "")) for e in feed.entries[:5]]
+    except Exception:
+        return []
+
+
+def generate_text_report(df, creator, channel_info, kpis, recs, dips) -> str:
+    today = date.today().isoformat()
+    top5 = df.nlargest(5, "views_per_day")
+    anom = df[df["anomaly_type"] != "normal"].nlargest(5, "z_score")
+    lines = [
+        "=" * 60,
+        "CREATOR ANALYTICS REPORT",
+        "=" * 60,
+        f"Creator   : {channel_info.get('name', creator)}",
+        f"Generated : {today}",
+        f"Period    : {df['published_at'].min().date()} → {df['published_at'].max().date()}",
+        f"Videos    : {kpis['total_videos']:,}",
+        "",
+        "KEY METRICS",
+        "-" * 40,
+        f"Avg Views         : {kpis['avg_views']/1e6:.1f}M",
+        f"Median Views      : {kpis['median_views']/1e6:.1f}M",
+        f"Avg Views/Day     : {kpis['avg_vpd']/1e6:.2f}M",
+        f"Avg Engagement    : {kpis['avg_engagement']*100:.2f}%",
+        f"Momentum Index    : {kpis['momentum']:.2f}x",
+        f"Hit Rate          : {kpis['hit_rate']*100:.0f}%",
+        f"Consistency Score : {kpis['consistency']*100:.0f}%",
+        f"Posting Cadence   : {kpis['cadence']:.1f} videos/week",
+        "",
+        "TOP 5 VIDEOS (by Views/Day)",
+        "-" * 40,
+    ]
+    for i, (_, row) in enumerate(top5.iterrows(), 1):
+        lines.append(f"{i}. {row['title'][:55]}")
+        lines.append(f"   Views/Day: {row['views_per_day']/1e6:.2f}M  |  "
+                     f"Engagement: {row['engagement_rate']*100:.2f}%  |  "
+                     f"Score: {row['composite_score']:.0f}/100 ({row['grade']})")
+    lines.append("")
+    if not anom.empty:
+        lines += ["ANOMALIES DETECTED", "-" * 40]
+        for _, row in anom.iterrows():
+            lines.append(f"{ANOMALY_EMOJI.get(row['anomaly_type'],'')} "
+                         f"[z={row['z_score']:+.1f}] {row['title'][:55]}")
+        lines.append("")
+    if not dips.empty:
+        lines += ["PERFORMANCE DIPS", "-" * 40]
+        for _, row in dips.iterrows():
+            lines.append(f"  {row['quarter_str']}  drop={row['drop_pct']*100:.0f}% from peak")
+        lines.append("")
+    lines += ["RECOMMENDATIONS", "-" * 40]
+    for rec in recs:
+        lines.append(f"[{rec['priority']}] {rec['title']}")
+        lines.append(f"  → {rec['action']}")
+        lines.append("")
+    lines += ["=" * 60, "Generated by Creator Analytics · YouTube Data API v3"]
+    return "\n".join(lines)
+
+
+def chart_cfg(is_music: bool) -> dict:
+    return dict(
+        template="plotly_dark",
+        paper_bgcolor="#121212" if is_music else "#0A0A0F",
+        plot_bgcolor="#1E1E1E" if is_music else "#14141C",
+        font_color="#E2E8F0",
+        margin=dict(l=0, r=0, t=40, b=0),
+    )
+
+
+def accent(is_music: bool) -> str:
+    return "#1DB954" if is_music else "#FF0000"
+
 
 try:
     all_channel_info = json.load(open("data/channel_info.json"))
 except Exception:
     all_channel_info = {}
 
-# ── sidebar ────────────────────────────────────────────────────────────────────
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SIDEBAR
+# ══════════════════════════════════════════════════════════════════════════════
 with st.sidebar:
-    st.caption("Creator Analytics · YouTube Data API v3")
+    st.markdown("## 📊 Creator Analytics")
+    st.caption("YouTube Data API v3 · Portfolio Project")
     st.divider()
-    creator = st.selectbox("Creator", list(CREATORS.keys()))
 
-slug = CREATORS[creator]["slug"]
-is_music = slug in MUSIC_ARTISTS
-df = load_data(slug)
-channel_info = all_channel_info.get(slug, {"name": creator, "avatar": ""})
-AC = accent(is_music)
+    creator = st.selectbox("**Creator**", list(CREATORS.keys()))
+    slug = CREATORS[creator]["slug"]
+    is_music = slug in MUSIC_ARTISTS
+    AC = accent(is_music)
 
-st.markdown(SPOTIFY_CSS if is_music else YT_CSS, unsafe_allow_html=True)
+    st.divider()
+    st.markdown("**Filters**")
 
-with st.sidebar:
-    if channel_info.get("avatar"):
-        st.image(channel_info["avatar"], width=72)
-    st.markdown(f"**{channel_info['name']}**")
-    min_date, max_date = df["published_at"].min().date(), df["published_at"].max().date()
-    date_range = st.slider("Date Range", min_value=min_date, max_value=max_date,
-                           value=(min_date, max_date), format="YYYY-MM")
-    top_n = st.slider("Top N videos", min_value=5, max_value=20, value=10)
-    min_views = st.select_slider("Min Views Filter",
+    with st.spinner("Loading…"):
+        df_raw, data_warnings = load_and_enrich(slug)
+
+    channel_info = all_channel_info.get(slug, {"name": creator, "avatar": ""})
+    min_d = df_raw["published_at"].min().date()
+    max_d = df_raw["published_at"].max().date()
+
+    date_range = st.slider("Date range", min_value=min_d, max_value=max_d,
+                           value=(min_d, max_d), format="YYYY-MM")
+    fmt_filter = st.radio("Format", ["All", "Short-form (<2 min)", "Long-form (≥2 min)"],
+                          horizontal=True)
+    min_views = st.select_slider(
+        "Min views",
         options=[0, 100_000, 500_000, 1_000_000, 5_000_000, 10_000_000],
-        value=1_000_000,
-        format_func=lambda x: "None" if x == 0 else f"{x/1e6:.1f}M")
+        value=0,
+        format_func=lambda x: "None" if x == 0 else f"{x/1e6:.1f}M",
+    )
+    top_n = st.slider("Top N for charts", 5, 20, 10)
 
-df_f = df[(df["published_at"].dt.date >= date_range[0]) &
-          (df["published_at"].dt.date <= date_range[1]) &
-          (df["view_count"] >= min_views)]
-
-# ── header ─────────────────────────────────────────────────────────────────────
-hc1, hc2 = st.columns([1, 10])
-with hc1:
+    st.divider()
+    st.markdown("**Data Health**")
+    if data_warnings:
+        for w in data_warnings:
+            st.markdown(f'<span class="badge-warn">⚠ {w}</span>', unsafe_allow_html=True)
+    else:
+        st.markdown('<span class="badge-ok">✓ All checks passed</span>', unsafe_allow_html=True)
+    st.caption(f"{len(df_raw):,} videos · {min_d} → {max_d}")
     if channel_info.get("avatar"):
-        st.image(channel_info["avatar"], width=60)
-with hc2:
-    st.markdown(f"## {channel_info['name']}")
-    st.caption(f"{len(df_f):,} videos · {date_range[0]} → {date_range[1]}")
+        st.image(channel_info["avatar"], width=56)
 
-# ── KPI cards ──────────────────────────────────────────────────────────────────
-kpis = [
-    ("TOTAL VIDEOS",    f"{len(df_f):,}",                          "in selected period"),
-    ("AVG VIEWS",       f"{df_f['view_count'].mean()/1e6:.1f}M",   "per video"),
-    ("AVG VIEWS / DAY", f"{df_f['views_per_day'].mean()/1e6:.2f}M","velocity"),
-    ("AVG ENGAGEMENT",  f"{df_f['engagement_rate'].mean()*100:.2f}%", "likes + comments / views"),
-]
-cols = st.columns(4)
-for i, (col, (label, val, sub)) in enumerate(zip(cols, kpis)):
-    col.markdown(kpi_card(label, val, sub, i, is_music), unsafe_allow_html=True)
+
+# ── Apply global filters ───────────────────────────────────────────────────────
+df_f = df_raw[
+    (df_raw["published_at"].dt.date >= date_range[0])
+    & (df_raw["published_at"].dt.date <= date_range[1])
+    & (df_raw["view_count"] >= min_views)
+].copy()
+if fmt_filter != "All":
+    df_f = df_f[df_f["format"] == fmt_filter]
+df_f = df_f.reset_index(drop=True)
+
+# Re-normalise scores on filtered subset
+if len(df_f) > 1:
+    df_f["virality_score"] = calc_virality_score(df_f)
+    df_f["composite_score"] = calc_composite_score(df_f)
+    df_f["grade"] = df_f["composite_score"].apply(performance_grade)
+    df_f = detect_video_anomalies(df_f)
+
+# ── Inject CSS ─────────────────────────────────────────────────────────────────
+st.markdown(build_css(AC), unsafe_allow_html=True)
+
+# ── Page header ────────────────────────────────────────────────────────────────
+hcol1, hcol2 = st.columns([1, 11])
+with hcol1:
+    if channel_info.get("avatar"):
+        st.image(channel_info["avatar"], width=56)
+with hcol2:
+    suffix = ""
+    if fmt_filter != "All":
+        suffix += f" · {fmt_filter}"
+    if min_views > 0:
+        suffix += f" · ≥{min_views/1e6:.1f}M views"
+    st.markdown(
+        f'<div class="page-title">{channel_info.get("name", creator)}</div>'
+        f'<div class="page-sub">{len(df_f):,} videos · '
+        f'{date_range[0]} → {date_range[1]}{suffix}</div>',
+        unsafe_allow_html=True,
+    )
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# ── top 5 thumbnails ──────────────────────────────────────────────────────────
-st.markdown(f'<div class="sec-head">🔥 Top 5 This Period — by Views Per Day</div>',
-            unsafe_allow_html=True)
+if len(df_f) == 0:
+    st.warning("No videos match the current filters. Adjust the filters in the sidebar.")
+    st.stop()
+
+# ── KPI row 1: Core metrics ────────────────────────────────────────────────────
+kpis = kpi_summary(df_f)
+_, _, vpd_trend  = period_trend(df_f, "views_per_day")
+_, _, eng_trend  = period_trend(df_f, "engagement_rate")
+_, _, view_trend = period_trend(df_f, "view_count")
+
+cols = st.columns(4)
+kpi_data = [
+    ("TOTAL VIDEOS",    f"{kpis['total_videos']:,}",             "in selected period",   None),
+    ("AVG VIEWS",       f"{kpis['avg_views']/1e6:.1f}M",         "per video",            view_trend),
+    ("AVG VIEWS / DAY", f"{kpis['avg_vpd']/1e6:.2f}M",           "velocity",             vpd_trend),
+    ("AVG ENGAGEMENT",  f"{kpis['avg_engagement']*100:.2f}%",    "likes + comments",     eng_trend),
+]
+for col, (label, val, sub, trend) in zip(cols, kpi_data):
+    col.markdown(kpi_card(label, val, sub, trend), unsafe_allow_html=True)
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+# ── KPI row 2: Advanced metrics ────────────────────────────────────────────────
+momentum = kpis["momentum"]
+mom_color = "#22C55E" if momentum > 1.1 else ("#EF4444" if momentum < 0.85 else "#F59E0B")
+mom_label = "↑ Growing" if momentum > 1.1 else ("↓ Declining" if momentum < 0.85 else "→ Stable")
+
+adv_cols = st.columns(4)
+adv_data = [
+    ("MOMENTUM INDEX", f"{momentum:.2f}x", f"{mom_label} (90-day)", mom_color),
+    ("HIT RATE",       f"{kpis['hit_rate']*100:.0f}%", "videos ≥ channel median", "#E2E8F0"),
+    ("CONSISTENCY",    f"{kpis['consistency']*100:.0f}%", "lower variance = higher",  "#E2E8F0"),
+    ("CADENCE",        f"{kpis['cadence']:.1f}/wk",      "avg videos per week",       "#E2E8F0"),
+]
+for col, (label, val, sub, color) in zip(adv_cols, adv_data):
+    col.markdown(adv_card(label, val, sub, color), unsafe_allow_html=True)
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+# ── Top 5 thumbnails ──────────────────────────────────────────────────────────
+st.markdown(f'<div class="sec-head">🔥 Top 5 — Views Per Day</div>', unsafe_allow_html=True)
 top5 = df_f.nlargest(5, "views_per_day")
-tcols = st.columns(5)
-for col, (_, row) in zip(tcols, top5.iterrows()):
+thumb_cols = st.columns(5)
+for col, (_, row) in zip(thumb_cols, top5.iterrows()):
     thumb = f"https://img.youtube.com/vi/{row['video_id']}/hqdefault.jpg"
-    url = f"https://www.youtube.com/watch?v={row['video_id']}"
+    url   = f"https://www.youtube.com/watch?v={row['video_id']}"
+    badge = ANOMALY_EMOJI.get(row.get("anomaly_type", "normal"), "")
     with col:
         st.markdown(
             f'<a href="{url}" target="_blank">'
             f'<img src="{thumb}" style="width:100%;border-radius:10px;display:block;"></a>'
             f'<div class="thumb-title">{row["title"]}</div>'
-            f'<div class="thumb-stat">{row["views_per_day"]/1e6:.1f}M / day</div>',
-            unsafe_allow_html=True)
+            f'<div class="thumb-stat">{row["views_per_day"]/1e6:.1f}M/day</div>'
+            f'<div class="thumb-badge">{badge} Score: {row["composite_score"]:.0f} ({row["grade"]})</div>',
+            unsafe_allow_html=True,
+        )
 
 st.markdown("<br>", unsafe_allow_html=True)
 st.divider()
 
-# ── tabs ───────────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4 = st.tabs(["📈 Performance", "🕰️ Career", "🔍 Content", "⚔️ Compare"])
+CB = chart_cfg(is_music)
 
-# ── TAB 1: Performance ────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# TABS
+# ══════════════════════════════════════════════════════════════════════════════
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    "📊 Overview",
+    "📈 Performance",
+    "🕰️ Career Arc",
+    "🔍 Content DNA",
+    "💡 Insights & Recs",
+    "⚔️ Compare",
+    "📤 Export",
+])
+
+
+# ── TAB 1: Overview ────────────────────────────────────────────────────────────
 with tab1:
+    st.markdown(f'<div class="sec-head">Performance Leaderboard — Top {top_n} by Composite Score</div>',
+                unsafe_allow_html=True)
+    lb = df_f.nlargest(top_n, "composite_score").copy()
+    lb["Rank"]       = range(1, len(lb) + 1)
+    lb["Title"]      = lb["title"].str[:55] + "…"
+    lb["Published"]  = lb["published_at"].dt.strftime("%Y-%m-%d")
+    lb["Views"]      = (lb["view_count"] / 1e6).round(1).astype(str) + "M"
+    lb["Views/Day"]  = (lb["views_per_day"] / 1e6).round(2).astype(str) + "M"
+    lb["Engagement"] = (lb["engagement_rate"] * 100).round(2).astype(str) + "%"
+    lb["Virality"]   = lb["virality_score"].astype(str) + "x"
+    lb["Score"]      = lb["composite_score"]
+    lb["Grade"]      = lb["grade"]
+    lb["⚡"]          = lb["anomaly_type"].map(ANOMALY_EMOJI).fillna("")
+    st.dataframe(
+        lb[["Rank","Title","Published","Views","Views/Day","Engagement","Virality","Score","Grade","⚡"]],
+        use_container_width=True, hide_index=True,
+        column_config={"Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100)},
+    )
+
+    st.markdown(f'<div class="sec-head">⚡ Anomaly Report — Spikes & Underperformers</div>',
+                unsafe_allow_html=True)
+    anom = df_f[df_f["anomaly_type"] != "normal"].sort_values("z_score", ascending=False)
+    if anom.empty:
+        st.info("No anomalies detected in the current filter range.")
+    else:
+        ad = anom[["title","published_at","view_count","views_per_day","z_score","anomaly_type"]].copy()
+        ad["Title"]      = ad["title"].str[:60] + "…"
+        ad["Published"]  = ad["published_at"].dt.strftime("%Y-%m-%d")
+        ad["Views"]      = (ad["view_count"] / 1e6).round(1).astype(str) + "M"
+        ad["Views/Day"]  = (ad["views_per_day"] / 1e6).round(2).astype(str) + "M"
+        ad["Z-Score"]    = ad["z_score"]
+        ad["Type"]       = ad.apply(anomaly_label, axis=1)
+        st.dataframe(ad[["Type","Title","Published","Views","Views/Day","Z-Score"]],
+                     use_container_width=True, hide_index=True)
+
+
+# ── TAB 2: Performance Charts ─────────────────────────────────────────────────
+with tab2:
     c1, c2 = st.columns(2)
-    cb = chart_base(is_music)
 
     with c1:
         top_vpd = df_f.nlargest(top_n, "views_per_day").sort_values("views_per_day")
-        top_vpd["label"] = top_vpd["title"].str[:38] + "…"
+        top_vpd["label"] = top_vpd["title"].str[:40] + "…"
         fig = px.bar(top_vpd, x="views_per_day", y="label", orientation="h",
-                     color="views_per_day", color_continuous_scale=["#333", AC],
-                     hover_data={"title": True, "views_per_day": ":.2s",
-                                 "published_at": True, "label": False},
-                     labels={"views_per_day": "Views/Day", "label": ""})
-        fig.update_layout(title=f"Top {top_n} — Views Per Day",
-                          coloraxis_showscale=False, height=420, **cb)
+                     color="virality_score",
+                     color_continuous_scale=[[0,"#222"],[0.5,"#553"],[1,AC]],
+                     hover_data={"title":True,"views_per_day":":.2s",
+                                 "virality_score":":.1f","label":False},
+                     labels={"views_per_day":"Views/Day","label":"","virality_score":"Virality"})
+        fig.update_layout(title=f"Top {top_n} — Views Per Day (coloured by virality)",
+                          coloraxis_showscale=False, height=420, **CB)
         fig.update_xaxes(tickformat=".2s", gridcolor="#222")
         fig.update_yaxes(gridcolor="#222")
         st.plotly_chart(fig, use_container_width=True)
 
     with c2:
-        top_eng = df_f.nlargest(top_n, "engagement_rate").sort_values("engagement_rate")
-        top_eng["label"] = top_eng["title"].str[:38] + "…"
-        top_eng["eng_pct"] = top_eng["engagement_rate"] * 100
-        fig = px.bar(top_eng, x="eng_pct", y="label", orientation="h",
-                     color="eng_pct", color_continuous_scale=["#333", "#43A047"],
-                     hover_data={"title": True, "eng_pct": ":.2f",
-                                 "published_at": True, "label": False},
-                     labels={"eng_pct": "Engagement %", "label": ""})
-        fig.update_layout(title=f"Top {top_n} — Engagement Rate",
-                          coloraxis_showscale=False, height=420, **cb)
-        fig.update_xaxes(ticksuffix="%", gridcolor="#222")
+        top_score = df_f.nlargest(top_n, "composite_score").sort_values("composite_score")
+        top_score["label"] = top_score["title"].str[:40] + "…"
+        fig = px.bar(top_score, x="composite_score", y="label", orientation="h",
+                     color="grade", color_discrete_map=GRADE_COLORS,
+                     hover_data={"title":True,"composite_score":":.1f",
+                                 "engagement_rate":":.3f","label":False},
+                     labels={"composite_score":"Composite Score (0–100)","label":"","grade":"Grade"})
+        fig.update_layout(title=f"Top {top_n} — Composite Score",
+                          height=420, **CB)
+        fig.update_xaxes(range=[0,100], gridcolor="#222")
         fig.update_yaxes(gridcolor="#222")
         st.plotly_chart(fig, use_container_width=True)
 
-    df_f2 = df_f.copy()
-    df_f2["views_M"] = df_f2["view_count"] / 1e6
-    fig = px.scatter(df_f2, x="views_per_day", y="engagement_rate",
+    df_sc = df_f.copy()
+    df_sc["views_M"] = df_sc["view_count"] / 1e6
+    fig = px.scatter(df_sc, x="views_per_day", y="engagement_rate",
                      color="format", size="views_M", hover_name="title",
-                     hover_data={"published_at": True, "views_per_day": ":.2s",
-                                 "engagement_rate": ":.3f", "views_M": False, "format": False},
-                     color_discrete_map={"Short-form (<2 min)": AC,
-                                         "Long-form (≥2 min)": "#1E88E5"},
-                     labels={"views_per_day": "Views Per Day", "engagement_rate": "Engagement Rate"})
-    fig.update_layout(title="Views/Day vs Engagement Rate — each dot is one video",
-                      height=420, **cb)
+                     hover_data={"published_at":True,"views_per_day":":.2s",
+                                 "engagement_rate":":.3f","views_M":False,"format":False,
+                                 "virality_score":":.1f","composite_score":":.0f"},
+                     color_discrete_map={"Short-form (<2 min)":AC,"Long-form (≥2 min)":"#2979FF"},
+                     labels={"views_per_day":"Views Per Day","engagement_rate":"Engagement Rate"})
+    fig.update_layout(title="Views/Day vs Engagement — each bubble = one video (size = total views)",
+                      height=440, **CB)
     fig.update_xaxes(tickformat=".2s", gridcolor="#222")
     fig.update_yaxes(tickformat=".1%", gridcolor="#222")
     st.plotly_chart(fig, use_container_width=True)
 
-# ── TAB 2: Career ──────────────────────────────────────────────────────────────
-with tab2:
-    cb = chart_base(is_music)
+    top_eng = df_f.nlargest(top_n, "engagement_rate").sort_values("engagement_rate")
+    top_eng["label"] = top_eng["title"].str[:40] + "…"
+    top_eng["eng_pct"] = top_eng["engagement_rate"] * 100
+    fig = px.bar(top_eng, x="eng_pct", y="label", orientation="h",
+                 color="eng_pct", color_continuous_scale=["#222","#43A047"],
+                 hover_data={"title":True,"eng_pct":":.2f","published_at":True,"label":False},
+                 labels={"eng_pct":"Engagement %","label":""})
+    fig.update_layout(title=f"Top {top_n} — Engagement Rate",
+                      coloraxis_showscale=False, height=380, **CB)
+    fig.update_xaxes(ticksuffix="%", gridcolor="#222")
+    fig.update_yaxes(gridcolor="#222")
+    st.plotly_chart(fig, use_container_width=True)
+
+
+# ── TAB 3: Career Arc ─────────────────────────────────────────────────────────
+with tab3:
     c1, c2 = st.columns(2)
 
     with c1:
-        roll = df_f["view_count"].rolling(40, center=True).mean()
+        roll = df_f["view_count"].rolling(30, center=True, min_periods=5).mean()
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=df_f["published_at"], y=df_f["view_count"]/1e6,
                                  mode="markers", name="Each video",
-                                 marker=dict(size=4, color="#555", opacity=0.5),
+                                 marker=dict(size=4, color="#3D3D50", opacity=0.6),
                                  hovertemplate="%{customdata}<br>%{y:.1f}M<extra></extra>",
                                  customdata=df_f["title"]))
         fig.add_trace(go.Scatter(x=df_f["published_at"], y=roll/1e6,
-                                 mode="lines", name="40-video avg",
+                                 mode="lines", name="30-video rolling avg",
                                  line=dict(color=AC, width=2.5)))
         fig.update_layout(title="Views Per Video — Career Arc", yaxis_title="Views (M)",
-                          height=360, xaxis_gridcolor="#222", yaxis_gridcolor="#222", **cb)
+                          height=360, xaxis_gridcolor="#222", yaxis_gridcolor="#222", **CB)
         st.plotly_chart(fig, use_container_width=True)
 
     with c2:
-        roll_eng = df_f["engagement_rate"].rolling(40, center=True).mean() * 100
+        roll_eng = df_f["engagement_rate"].rolling(30, center=True, min_periods=5).mean() * 100
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=df_f["published_at"], y=df_f["engagement_rate"]*100,
                                  mode="markers", name="Each video",
-                                 marker=dict(size=4, color="#555", opacity=0.5),
+                                 marker=dict(size=4, color="#3D3D50", opacity=0.6),
                                  hovertemplate="%{customdata}<br>%{y:.2f}%<extra></extra>",
                                  customdata=df_f["title"]))
         fig.add_trace(go.Scatter(x=df_f["published_at"], y=roll_eng,
-                                 mode="lines", name="40-video avg",
+                                 mode="lines", name="30-video rolling avg",
                                  line=dict(color="#43A047", width=2.5)))
         fig.update_layout(title="Engagement Rate — Career Arc",
                           yaxis_title="Engagement Rate (%)", yaxis_ticksuffix="%",
-                          height=360, xaxis_gridcolor="#222", yaxis_gridcolor="#222", **cb)
+                          height=360, xaxis_gridcolor="#222", yaxis_gridcolor="#222", **CB)
         st.plotly_chart(fig, use_container_width=True)
 
     c3, c4 = st.columns(2)
     with c3:
         dur_q = df_f.groupby("quarter")["duration_sec"].median() / 60
-        fig = px.line(x=dur_q.index, y=dur_q.values, markers=True,
-                      labels={"x": "", "y": "Median Duration (min)"})
-        fig.update_traces(line_color="#FB8C00", marker_color="#FB8C00", marker_size=5)
-        fig.update_layout(title="Video Length — Quarterly Median", height=300,
-                          xaxis_gridcolor="#222", yaxis_gridcolor="#222", **cb)
+        fig = px.area(x=dur_q.index, y=dur_q.values, markers=True,
+                      labels={"x":"","y":"Median Duration (min)"})
+        fig.update_traces(line_color="#FB8C00", marker_color="#FB8C00",
+                          fillcolor="rgba(251,140,0,0.15)")
+        fig.update_layout(title="Video Length — Quarterly Median",
+                          height=300, xaxis_gridcolor="#222", yaxis_gridcolor="#222", **CB)
         st.plotly_chart(fig, use_container_width=True)
 
     with c4:
         freq_q = df_f.groupby("quarter").size().reset_index(name="count")
         fig = px.bar(freq_q, x="quarter", y="count",
-                     labels={"quarter": "", "count": "Videos Uploaded"})
+                     labels={"quarter":"","count":"Videos Uploaded"})
         fig.update_traces(marker_color=AC, opacity=0.85)
-        fig.update_layout(title="Upload Frequency by Quarter", height=300,
-                          xaxis_gridcolor="#222", yaxis_gridcolor="#222", **cb)
+        fig.update_layout(title="Upload Frequency by Quarter",
+                          height=300, xaxis_gridcolor="#222", yaxis_gridcolor="#222", **CB)
         st.plotly_chart(fig, use_container_width=True)
 
     st.divider()
-    st.markdown(f'<div class="sec-head">📉 Performance Dips — What Happened?</div>',
+    st.markdown(f'<div class="sec-head">📉 Performance Dips — When Things Dropped</div>',
                 unsafe_allow_html=True)
-    st.caption("Quarters where avg views dropped >35% from recent peak.")
-    dips = detect_dips(df_f, channel_info["name"])
+    st.caption("Quarters where avg views dropped >35% from rolling 4-quarter peak.")
+    dips = detect_quarterly_dips(df_f)
     if dips.empty:
-        st.info("No significant dips detected.")
+        st.info("No significant performance dips detected in this period.")
     else:
         for _, row in dips.iterrows():
-            qstr = row["quarter_str"]; yr = qstr[:4]; drop = row["drop_pct"]*100
-            sq = urllib.parse.quote(f"{channel_info['name']} {yr}")
+            qstr = row["quarter_str"]
+            sq   = urllib.parse.quote(f"{channel_info['name']} {qstr[:4]}")
             news_url = f"https://news.google.com/search?q={sq}&hl=en-US&gl=US&ceid=US:en"
             ci, cb2 = st.columns([5, 1])
             with ci:
                 st.markdown(
                     f'<div class="dip-row"><span style="color:{AC};font-weight:700">{qstr}</span>'
-                    f' — avg views dropped <b>{drop:.0f}%</b> from peak</div>',
+                    f' — avg views dropped <b>{row["drop_pct"]*100:.0f}%</b> from peak</div>',
                     unsafe_allow_html=True)
             with cb2:
                 st.markdown(
                     f'<a href="{news_url}" target="_blank">'
-                    f'<button style="background:#222;color:#fff;border:1px solid #444;'
-                    f'padding:5px 14px;border-radius:6px;cursor:pointer;margin-top:4px;">🔍 News</button></a>',
-                    unsafe_allow_html=True)
+                    f'<button style="background:#1E1E2E;color:#E2E8F0;border:1px solid #333;'
+                    f'padding:5px 14px;border-radius:6px;cursor:pointer;font-size:0.8rem;">'
+                    f'🔍 News</button></a>', unsafe_allow_html=True)
             with st.expander(f"📰 Headlines — {qstr}"):
                 q_end = pd.Timestamp(qstr) + pd.offsets.QuarterEnd()
                 news = fetch_news(channel_info["name"], qstr, q_end.strftime("%Y-%m-%d"))
@@ -432,203 +627,287 @@ with tab2:
                     for title, link, pub in news:
                         st.markdown(f"- [{title}]({link})  \n  *{pub[:16]}*")
                 else:
-                    st.caption("Click News to search manually.")
+                    st.caption("Click News above to search manually.")
 
-# ── TAB 3: Content ─────────────────────────────────────────────────────────────
-with tab3:
-    cb = chart_base(is_music)
+
+# ── TAB 4: Content DNA ────────────────────────────────────────────────────────
+with tab4:
     c1, c2 = st.columns(2)
 
     with c1:
         cat = df_f.groupby("category").agg(
             count=("video_id","count"),
             avg_views=("view_count","mean"),
-            avg_eng=("engagement_rate","mean")
+            avg_eng=("engagement_rate","mean"),
         ).reset_index().sort_values("avg_views")
-        cat["avg_views_M"] = cat["avg_views"]/1e6
-        cat["avg_eng_pct"] = cat["avg_eng"]*100
+        cat["avg_views_M"]  = cat["avg_views"] / 1e6
+        cat["avg_eng_pct"]  = cat["avg_eng"] * 100
         fig = px.bar(cat, x="avg_views_M", y="category", orientation="h",
-                     color="avg_views_M", color_continuous_scale=["#222", "#43A047"],
-                     hover_data={"count":True,"avg_eng_pct":":.2f","avg_views_M":":.1f","category":False},
+                     color="avg_views_M", color_continuous_scale=["#222","#43A047"],
+                     hover_data={"count":True,"avg_eng_pct":":.2f",
+                                 "avg_views_M":":.1f","category":False},
                      labels={"avg_views_M":"Avg Views (M)","category":""})
         fig.update_layout(title="Avg Views by Content Category",
                           coloraxis_showscale=False, height=380,
-                          xaxis_gridcolor="#222", yaxis_gridcolor="#222", **cb)
+                          xaxis_gridcolor="#222", yaxis_gridcolor="#222", **CB)
         st.plotly_chart(fig, use_container_width=True)
 
     with c2:
-        keywords = ["$","win","subscribe","survive","last to","vs","guess","free","every",
-                    "MV","ft.","live","Official","周杰倫","演唱會","新歌","林俊傑"]
-        rows = []
-        for kw in keywords:
+        kw_rows = []
+        for kw in TITLE_KEYWORDS:
             mask = df_f["title"].str.contains(kw, case=False, regex=False, na=False)
             if mask.sum() >= 2:
-                rows.append({"keyword": f'"{kw}" (n={mask.sum()})',
-                             "avg_views_M": df_f[mask]["view_count"].mean()/1e6})
-        if rows:
-            kw_df = pd.DataFrame(rows).sort_values("avg_views_M")
+                kw_rows.append({"keyword": f'"{kw}" (n={mask.sum()})',
+                                "avg_views_M": df_f[mask]["view_count"].mean()/1e6})
+        if kw_rows:
+            kw_df = pd.DataFrame(kw_rows).sort_values("avg_views_M")
             fig = px.bar(kw_df, x="avg_views_M", y="keyword", orientation="h",
-                         color="avg_views_M", color_continuous_scale=["#222", AC],
+                         color="avg_views_M", color_continuous_scale=["#222",AC],
                          labels={"avg_views_M":"Avg Views (M)","keyword":""})
             fig.update_layout(title="Title Keywords vs Avg Views",
                               coloraxis_showscale=False, height=380,
-                              xaxis_gridcolor="#222", yaxis_gridcolor="#222", **cb)
+                              xaxis_gridcolor="#222", yaxis_gridcolor="#222", **CB)
             st.plotly_chart(fig, use_container_width=True)
         else:
-            st.info("Not enough keyword matches.")
+            st.info("Not enough keyword matches (need ≥2 per keyword).")
 
+    st.markdown(f'<div class="sec-head">Short-form vs Long-form Breakdown</div>',
+                unsafe_allow_html=True)
     grp = df_f.groupby("format").agg(
         Videos=("video_id","count"),
         avg_views=("view_count","mean"),
         avg_vpd=("views_per_day","mean"),
-        avg_eng=("engagement_rate","mean")
+        avg_eng=("engagement_rate","mean"),
+        avg_virality=("virality_score","mean"),
+        avg_score=("composite_score","mean"),
     ).reset_index()
-    grp["Avg Views (M)"] = (grp["avg_views"]/1e6).round(1)
-    grp["Avg Views/Day (M)"] = (grp["avg_vpd"]/1e6).round(2)
+    grp["Avg Views (M)"]      = (grp["avg_views"]/1e6).round(1)
+    grp["Avg Views/Day (M)"]  = (grp["avg_vpd"]/1e6).round(2)
     grp["Avg Engagement (%)"] = (grp["avg_eng"]*100).round(2)
-    st.markdown(f'<div class="sec-head">Short-form vs Long-form</div>', unsafe_allow_html=True)
-    st.dataframe(grp[["format","Videos","Avg Views (M)","Avg Views/Day (M)","Avg Engagement (%)"]],
-                 use_container_width=True, hide_index=True)
+    grp["Avg Virality"]       = grp["avg_virality"].round(2)
+    grp["Avg Score"]          = grp["avg_score"].round(1)
+    st.dataframe(
+        grp[["format","Videos","Avg Views (M)","Avg Views/Day (M)",
+             "Avg Engagement (%)","Avg Virality","Avg Score"]].rename(columns={"format":"Format"}),
+        use_container_width=True, hide_index=True,
+    )
 
-# ── TAB 4: Compare ─────────────────────────────────────────────────────────────
-with tab4:
-    compare_options = list(CREATORS.keys())
-    cc1, cc2 = st.columns(2)
+    if df_f["format"].nunique() > 1:
+        fig = px.histogram(df_f, x="composite_score", color="format",
+                           nbins=20, barmode="overlay", opacity=0.75,
+                           color_discrete_map={"Short-form (<2 min)":AC,"Long-form (≥2 min)":"#2979FF"},
+                           labels={"composite_score":"Composite Score (0–100)","format":""})
+        fig.update_layout(title="Score Distribution by Format",
+                          height=300, xaxis_gridcolor="#222", yaxis_gridcolor="#222", **CB)
+        st.plotly_chart(fig, use_container_width=True)
+
+
+# ── TAB 5: Insights & Recommendations ─────────────────────────────────────────
+with tab5:
+    col_ins, col_rec = st.columns([1, 1])
+
+    with col_ins:
+        st.markdown(f'<div class="sec-head">Executive Insights</div>', unsafe_allow_html=True)
+        if len(df_f) >= 5:
+            st.markdown(generate_creator_insights(df_f, channel_info.get("name", creator)),
+                        unsafe_allow_html=True)
+        else:
+            st.info("Not enough data for insights. Adjust filters.")
+
+    with col_rec:
+        st.markdown(f'<div class="sec-head">Content Strategy Recommendations</div>',
+                    unsafe_allow_html=True)
+        if len(df_f) >= 5:
+            recs = generate_recommendations(df_f, channel_info.get("name", creator))
+            for rec in recs:
+                st.markdown(rec_card(rec), unsafe_allow_html=True)
+        else:
+            st.info("Not enough data for recommendations.")
+
+
+# ── TAB 6: Compare ────────────────────────────────────────────────────────────
+with tab6:
+    cc1, cc2, cc3 = st.columns([2, 2, 3])
     with cc1:
-        creator_a = st.selectbox("Creator A", compare_options, index=0, key="ca")
+        creator_a = st.selectbox("Creator A", list(CREATORS.keys()), index=0, key="ca")
     with cc2:
-        creator_b = st.selectbox("Creator B", compare_options, index=2, key="cb")
+        creator_b = st.selectbox("Creator B", list(CREATORS.keys()), index=2, key="cb")
+    with cc3:
+        cmp_date_str = st.text_input("Compare from (YYYY-MM-DD)", value="2020-01-01",
+                                      help="Filters both creators to the same window.")
+        try:
+            cmp_start = pd.Timestamp(cmp_date_str)
+        except Exception:
+            cmp_start = pd.Timestamp("2020-01-01")
 
-    @st.cache_data
-    def load_compare(slug):
-        d = pd.read_csv(f"data/processed/{slug}_metrics.csv")
+    @st.cache_data(show_spinner=False)
+    def load_compare(slug_c: str):
+        d = pd.read_csv(f"data/processed/{slug_c}_metrics.csv")
         d["published_at"] = pd.to_datetime(d["published_at"], utc=True).dt.tz_localize(None)
         d["duration_sec"] = d["duration"].apply(parse_sec)
         d["is_short"] = d["duration_sec"] < 120
+        d["format"] = d["is_short"].map({True:"Short-form (<2 min)",False:"Long-form (≥2 min)"})
         d["category"] = d["title"].apply(categorize)
         d["quarter"] = d["published_at"].dt.to_period("Q").dt.to_timestamp()
+        d["virality_score"] = calc_virality_score(d)
+        d["composite_score"] = calc_composite_score(d)
         return d.sort_values("published_at").reset_index(drop=True)
 
     da = load_compare(CREATORS[creator_a]["slug"])
     db = load_compare(CREATORS[creator_b]["slug"])
-    da["creator"] = creator_a; db["creator"] = creator_b
-    combined = pd.concat([da, db], ignore_index=True)
-    cmp_music = CREATORS[creator_a]["slug"] in MUSIC_ARTISTS and CREATORS[creator_b]["slug"] in MUSIC_ARTISTS
-    CA, CB = ("#1DB954" if cmp_music else "#FF0000"), "#2979FF"
-    CMAP = {creator_a: CA, creator_b: CB}
-    cb = chart_base(cmp_music)
+    da = da[da["published_at"] >= cmp_start].reset_index(drop=True)
+    db = db[db["published_at"] >= cmp_start].reset_index(drop=True)
 
-    # KPI row
-    st.markdown(f'<div class="sec-head">At a Glance</div>', unsafe_allow_html=True)
-    k1,k2,k3,k4,k5,k6 = st.columns(6)
-    k1.metric(f"{creator_a}", f"{len(da):,}", "videos")
-    k2.metric("Avg Views", f"{da['view_count'].mean()/1e6:.1f}M")
-    k3.metric("Avg Engagement", f"{da['engagement_rate'].mean()*100:.2f}%")
-    k4.metric(f"{creator_b}", f"{len(db):,}", "videos")
-    k5.metric("Avg Views", f"{db['view_count'].mean()/1e6:.1f}M")
-    k6.metric("Avg Engagement", f"{db['engagement_rate'].mean()*100:.2f}%")
+    if len(da) < 3 or len(db) < 3:
+        st.warning("Not enough data after date filter. Try an earlier date.")
+    else:
+        from src.metrics import calc_momentum as _mom, calc_hit_rate as _hr, calc_posting_cadence as _cad
 
-    st.divider()
-    c1, c2 = st.columns(2)
+        da["creator"] = creator_a
+        db["creator"] = creator_b
+        combined = pd.concat([da, db], ignore_index=True)
+        cmp_music = CREATORS[creator_a]["slug"] in MUSIC_ARTISTS and CREATORS[creator_b]["slug"] in MUSIC_ARTISTS
+        CA2, CB3 = ("#1DB954" if cmp_music else "#FF0000"), "#2979FF"
+        CMAP = {creator_a: CA2, creator_b: CB3}
+        cmp_CB = chart_cfg(cmp_music)
 
-    with c1:
-        fig = go.Figure()
-        for label, d in [(creator_a,da),(creator_b,db)]:
-            roll = d["view_count"].rolling(20,center=True).mean()
-            fig.add_trace(go.Scatter(x=d["published_at"],y=roll/1e6,mode="lines",name=label,
-                line=dict(color=CMAP[label],width=2.5),
-                hovertemplate=f"{label}<br>%{{x|%Y-%m}}<br>%{{y:.1f}}M<extra></extra>"))
-        fig.update_layout(title="Views Per Video — Rolling Avg", yaxis_title="Views (M)",
-                          height=360, xaxis_gridcolor="#222", yaxis_gridcolor="#222",
-                          legend=dict(x=0.01,y=0.99), **cb)
-        st.plotly_chart(fig, use_container_width=True)
+        # Head-to-head table
+        st.markdown(f'<div class="sec-head">Head-to-Head KPIs</div>', unsafe_allow_html=True)
+        hth = pd.DataFrame({
+            "Metric": ["Videos","Avg Views","Avg Views/Day","Avg Engagement",
+                       "Momentum (90d)","Hit Rate","Cadence (vids/wk)","Avg Composite Score"],
+            creator_a: [f"{len(da):,}", f"{da['view_count'].mean()/1e6:.1f}M",
+                        f"{da['views_per_day'].mean()/1e6:.2f}M",
+                        f"{da['engagement_rate'].mean()*100:.2f}%",
+                        f"{_mom(da):.2f}x", f"{_hr(da)*100:.0f}%",
+                        f"{_cad(da):.1f}", f"{da['composite_score'].mean():.1f}"],
+            creator_b: [f"{len(db):,}", f"{db['view_count'].mean()/1e6:.1f}M",
+                        f"{db['views_per_day'].mean()/1e6:.2f}M",
+                        f"{db['engagement_rate'].mean()*100:.2f}%",
+                        f"{_mom(db):.2f}x", f"{_hr(db)*100:.0f}%",
+                        f"{_cad(db):.1f}", f"{db['composite_score'].mean():.1f}"],
+        })
+        st.dataframe(hth, use_container_width=True, hide_index=True)
 
-    with c2:
-        fig = go.Figure()
-        for label, d in [(creator_a,da),(creator_b,db)]:
-            roll = d["engagement_rate"].rolling(20,center=True).mean()*100
-            fig.add_trace(go.Scatter(x=d["published_at"],y=roll,mode="lines",name=label,
-                line=dict(color=CMAP[label],width=2.5),
-                hovertemplate=f"{label}<br>%{{x|%Y-%m}}<br>%{{y:.2f}}%<extra></extra>"))
-        fig.update_layout(title="Engagement Rate — Rolling Avg",
-                          yaxis_title="Engagement Rate (%)", yaxis_ticksuffix="%",
-                          height=360, xaxis_gridcolor="#222", yaxis_gridcolor="#222",
-                          legend=dict(x=0.01,y=0.99), **cb)
-        st.plotly_chart(fig, use_container_width=True)
+        st.divider()
+        c1, c2 = st.columns(2)
 
-    c3, c4 = st.columns(2)
-    with c3:
-        fig = px.box(combined[combined["view_count"]>=1_000_000],
-                     x="creator",y="views_per_day",color="creator",
-                     color_discrete_map=CMAP,points="outliers",hover_name="title",
-                     labels={"views_per_day":"Views Per Day","creator":""})
-        fig.update_layout(title="Views/Day Distribution",height=360,showlegend=False,
-                          yaxis_gridcolor="#222", **cb)
-        fig.update_yaxes(tickformat=".2s")
-        st.plotly_chart(fig, use_container_width=True)
-
-    with c4:
-        rows = []
-        for label, d in [(creator_a,da),(creator_b,db)]:
-            for fmt,mask in [("Short (<2min)",d["is_short"]),("Long (≥2min)",~d["is_short"])]:
-                sub = d[mask & (d["view_count"]>=1_000_000)]
-                if len(sub)>=3:
-                    rows.append({"creator":label,"format":fmt,
-                                 "avg_views_M":sub["view_count"].mean()/1e6})
-        if rows:
-            fdf = pd.DataFrame(rows)
-            fig = px.bar(fdf,x="format",y="avg_views_M",color="creator",barmode="group",
-                         color_discrete_map=CMAP,text_auto=".1f",
-                         labels={"avg_views_M":"Avg Views (M)","format":"","creator":""})
-            fig.update_layout(title="Short vs Long Form",height=360,
-                              yaxis_gridcolor="#222",legend=dict(x=0.01,y=0.99),**cb)
+        with c1:
+            fig = go.Figure()
+            for label, d in [(creator_a, da), (creator_b, db)]:
+                roll = d["view_count"].rolling(20, center=True, min_periods=5).mean()
+                fig.add_trace(go.Scatter(x=d["published_at"], y=roll/1e6, mode="lines",
+                                         name=label, line=dict(color=CMAP[label], width=2.5),
+                                         hovertemplate=f"{label}<br>%{{x|%Y-%m}}<br>%{{y:.1f}}M<extra></extra>"))
+            fig.update_layout(title="Views Per Video — Rolling Avg", yaxis_title="Views (M)",
+                              height=360, xaxis_gridcolor="#222", yaxis_gridcolor="#222",
+                              legend=dict(x=0.01,y=0.99), **cmp_CB)
             st.plotly_chart(fig, use_container_width=True)
 
-    freq_rows = []
-    for label,d in [(creator_a,da),(creator_b,db)]:
-        freq = d.groupby("quarter").size().reset_index(name="count")
-        freq["creator"] = label; freq_rows.append(freq)
-    freq_df = pd.concat(freq_rows)
-    fig = px.line(freq_df,x="quarter",y="count",color="creator",
-                  color_discrete_map=CMAP,markers=True,
-                  labels={"quarter":"","count":"Videos Uploaded","creator":""})
-    fig.update_layout(title="Upload Frequency by Quarter",height=300,
-                      xaxis_gridcolor="#222",yaxis_gridcolor="#222",**cb)
-    st.plotly_chart(fig, use_container_width=True)
+        with c2:
+            fig = go.Figure()
+            for label, d in [(creator_a, da), (creator_b, db)]:
+                roll = d["engagement_rate"].rolling(20, center=True, min_periods=5).mean()*100
+                fig.add_trace(go.Scatter(x=d["published_at"], y=roll, mode="lines",
+                                         name=label, line=dict(color=CMAP[label], width=2.5),
+                                         hovertemplate=f"{label}<br>%{{x|%Y-%m}}<br>%{{y:.2f}}%<extra></extra>"))
+            fig.update_layout(title="Engagement Rate — Rolling Avg",
+                              yaxis_title="Engagement Rate (%)", yaxis_ticksuffix="%",
+                              height=360, xaxis_gridcolor="#222", yaxis_gridcolor="#222",
+                              legend=dict(x=0.01,y=0.99), **cmp_CB)
+            st.plotly_chart(fig, use_container_width=True)
+
+        c3, c4 = st.columns(2)
+        with c3:
+            fig = px.box(combined[combined["view_count"]>=500_000],
+                         x="creator", y="views_per_day", color="creator",
+                         color_discrete_map=CMAP, points="outliers", hover_name="title",
+                         labels={"views_per_day":"Views Per Day","creator":""})
+            fig.update_layout(title="Views/Day Distribution", height=360,
+                              showlegend=False, yaxis_gridcolor="#222", **cmp_CB)
+            fig.update_yaxes(tickformat=".2s")
+            st.plotly_chart(fig, use_container_width=True)
+
+        with c4:
+            freq_rows = []
+            for label, d in [(creator_a, da), (creator_b, db)]:
+                freq = d.groupby("quarter").size().reset_index(name="count")
+                freq["creator"] = label
+                freq_rows.append(freq)
+            freq_df = pd.concat(freq_rows)
+            fig = px.line(freq_df, x="quarter", y="count", color="creator",
+                          color_discrete_map=CMAP, markers=True,
+                          labels={"quarter":"","count":"Videos Uploaded","creator":""})
+            fig.update_layout(title="Upload Frequency by Quarter", height=360,
+                              xaxis_gridcolor="#222", yaxis_gridcolor="#222", **cmp_CB)
+            st.plotly_chart(fig, use_container_width=True)
+
+        fmt_rows = []
+        for label, d in [(creator_a, da), (creator_b, db)]:
+            for fmt, mask in [("Short (<2min)", d["is_short"]), ("Long (≥2min)", ~d["is_short"])]:
+                sub = d[mask & (d["view_count"]>=500_000)]
+                if len(sub) >= 3:
+                    fmt_rows.append({"creator":label,"format":fmt,
+                                     "avg_views_M":sub["view_count"].mean()/1e6})
+        if fmt_rows:
+            fdf = pd.DataFrame(fmt_rows)
+            fig = px.bar(fdf, x="format", y="avg_views_M", color="creator",
+                         barmode="group", color_discrete_map=CMAP, text_auto=".1f",
+                         labels={"avg_views_M":"Avg Views (M)","format":"","creator":""})
+            fig.update_layout(title="Short vs Long Form — Avg Views", height=320,
+                              yaxis_gridcolor="#222", legend=dict(x=0.01,y=0.99), **cmp_CB)
+            st.plotly_chart(fig, use_container_width=True)
+
+        st.divider()
+        st.markdown(f'<div class="sec-head">Analysis</div>', unsafe_allow_html=True)
+        st.markdown(generate_comparison_insights(da, db, creator_a, creator_b),
+                    unsafe_allow_html=True)
+
+
+# ── TAB 7: Export ─────────────────────────────────────────────────────────────
+with tab7:
+    st.markdown(f'<div class="sec-head">Download Data & Reports</div>', unsafe_allow_html=True)
+
+    kpis_ex   = kpi_summary(df_f)
+    recs_ex   = generate_recommendations(df_f, channel_info.get("name", creator))
+    dips_ex   = detect_quarterly_dips(df_f)
+
+    ec1, ec2, ec3 = st.columns(3)
+
+    with ec1:
+        st.markdown("**📄 Full Dataset CSV**")
+        st.caption(f"{len(df_f):,} videos · all metrics, scores, anomaly flags")
+        export_df = df_f[[
+            "video_id","title","published_at","view_count","like_count","comment_count",
+            "duration","video_age_days","views_per_day","like_rate","comment_rate",
+            "engagement_rate","duration_sec","format","category",
+            "virality_score","composite_score","grade","z_score","anomaly_type",
+        ]].copy()
+        export_df["published_at"] = export_df["published_at"].dt.strftime("%Y-%m-%d")
+        st.download_button("⬇ Download CSV", data=export_df.to_csv(index=False),
+                           file_name=f"{slug}_analytics_{date.today()}.csv",
+                           mime="text/csv", use_container_width=True)
+
+    with ec2:
+        st.markdown("**📋 Executive Summary Report**")
+        st.caption("KPIs · top videos · anomalies · recommendations")
+        report = generate_text_report(df_f, creator, channel_info, kpis_ex, recs_ex, dips_ex)
+        st.download_button("⬇ Download Report (.txt)", data=report,
+                           file_name=f"{slug}_report_{date.today()}.txt",
+                           mime="text/plain", use_container_width=True)
+
+    with ec3:
+        st.markdown(f"**📊 Top {top_n} Leaderboard CSV**")
+        st.caption("Ranked by composite score")
+        lb_ex = df_f.nlargest(top_n, "composite_score")[
+            ["title","published_at","view_count","views_per_day",
+             "engagement_rate","virality_score","composite_score","grade"]
+        ].copy()
+        lb_ex["published_at"] = lb_ex["published_at"].dt.strftime("%Y-%m-%d")
+        st.download_button("⬇ Download Leaderboard", data=lb_ex.to_csv(index=False),
+                           file_name=f"{slug}_leaderboard_{date.today()}.csv",
+                           mime="text/csv", use_container_width=True)
 
     st.divider()
-    st.markdown(f'<div class="sec-head">📊 Analysis</div>', unsafe_allow_html=True)
-    st.markdown(generate_insights(da, db, creator_a, creator_b), unsafe_allow_html=True)
-
-    st.divider()
-    st.markdown(f'<div class="sec-head">📉 Performance Dips</div>', unsafe_allow_html=True)
-    st.caption("Quarters where avg views dropped >35% from recent peak.")
-    all_dips = pd.concat([detect_dips(da,creator_a),detect_dips(db,creator_b)],ignore_index=True)
-    if all_dips.empty:
-        st.info("No significant dips detected.")
-    else:
-        for _, row in all_dips.iterrows():
-            drop = row["drop_pct"]*100; qstr = row["quarter_str"]
-            clabel = row["creator"]; color = CMAP.get(clabel, "#888")
-            sq = urllib.parse.quote(f"{clabel} {qstr[:4]}")
-            news_url = f"https://news.google.com/search?q={sq}&hl=en-US&gl=US&ceid=US:en"
-            ci2, cb3 = st.columns([5,1])
-            with ci2:
-                st.markdown(
-                    f'<div class="dip-row"><span style="color:{color};font-weight:700">{clabel}</span>'
-                    f' — <b>{qstr}</b>: avg views dropped <b>{drop:.0f}%</b></div>',
-                    unsafe_allow_html=True)
-            with cb3:
-                st.markdown(
-                    f'<a href="{news_url}" target="_blank">'
-                    f'<button style="background:#222;color:#fff;border:1px solid #444;'
-                    f'padding:5px 14px;border-radius:6px;cursor:pointer;margin-top:4px;">🔍 News</button></a>',
-                    unsafe_allow_html=True)
-            with st.expander(f"📰 Headlines — {clabel} {qstr}"):
-                q_end = pd.Timestamp(qstr) + pd.offsets.QuarterEnd()
-                news = fetch_news(clabel, qstr, q_end.strftime("%Y-%m-%d"))
-                if news:
-                    for title, link, pub in news:
-                        st.markdown(f"- [{title}]({link})  \n  *{pub[:16]}*")
-                else:
-                    st.caption("Click News to search manually.")
+    st.markdown("**Preview — Executive Summary**")
+    st.code(report, language=None)

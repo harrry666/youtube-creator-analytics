@@ -6,3 +6,5 @@ data/raw/
 *.zip
 .ipynb_checkpoints/
 creator-analytics-share.zip
+app_backup.py
+outputs/figures/
