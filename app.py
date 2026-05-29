@@ -155,6 +155,97 @@ def rec_card(rec: dict) -> str:
             f'<div class="rec-action">{rec["action"]}</div></div>')
 
 
+def so_what_block(obs: str, imp: str, rec: str, accent_color: str = "#FF0000") -> str:
+    return f"""
+    <div style="background:#12122A;border:1px solid #2A2A4A;border-radius:8px;
+                padding:16px 20px;margin-bottom:12px;">
+      <div style="display:flex;gap:24px;align-items:flex-start;">
+        <div style="min-width:110px;">
+          <div style="color:#666;font-size:0.68rem;text-transform:uppercase;
+                      letter-spacing:0.1em;margin-bottom:2px;">Observation</div>
+          <div style="color:#E0E0F0;font-size:0.88rem;line-height:1.45;">{obs}</div>
+        </div>
+        <div style="color:#333;font-size:1.2rem;padding-top:14px;">→</div>
+        <div style="min-width:140px;">
+          <div style="color:#666;font-size:0.68rem;text-transform:uppercase;
+                      letter-spacing:0.1em;margin-bottom:2px;">Implication</div>
+          <div style="color:#E0E0F0;font-size:0.88rem;line-height:1.45;">{imp}</div>
+        </div>
+        <div style="color:#333;font-size:1.2rem;padding-top:14px;">→</div>
+        <div style="flex:1;">
+          <div style="color:{accent_color};font-size:0.68rem;text-transform:uppercase;
+                      letter-spacing:0.1em;margin-bottom:2px;">Recommendation</div>
+          <div style="color:#F0F0FF;font-size:0.88rem;font-weight:500;
+                      line-height:1.45;">{rec}</div>
+        </div>
+      </div>
+    </div>"""
+
+
+def generate_so_what(df: pd.DataFrame, creator_name: str, ac: str) -> str:
+    from src.metrics import calc_momentum, calc_posting_cadence
+
+    blocks = []
+
+    # Block 1: Momentum
+    momentum = calc_momentum(df)
+    if momentum >= 1.1:
+        mom_obs = f"90-day avg views/day is <b>{momentum:.2f}x</b> the all-time channel average."
+        mom_imp = "Channel is actively accelerating — algorithm is feeding it."
+        mom_rec = "Double down on what's working now. Don't experiment mid-momentum."
+    elif momentum >= 0.85:
+        mom_obs = f"90-day avg views/day is <b>{momentum:.2f}x</b> the all-time average."
+        mom_imp = "Channel is stable but not growing. Plateau risk if no format change."
+        mom_rec = "Test one new content format this quarter. Measure against current baseline."
+    else:
+        mom_obs = f"90-day avg views/day is only <b>{momentum:.2f}x</b> the all-time average."
+        mom_imp = "Channel is declining. Recent uploads are underperforming the historical baseline."
+        mom_rec = "Identify the inflection point. Revert to the last format that drove above-baseline performance."
+    blocks.append(so_what_block(mom_obs, mom_imp, mom_rec, ac))
+
+    # Block 2: Format efficiency
+    if "duration_sec" in df.columns and "format" in df.columns:
+        grp = df.groupby("format")["views_per_day"].mean()
+        if len(grp) > 1:
+            best_fmt = grp.idxmax()
+            worst_fmt = grp.idxmin()
+            ratio = grp.max() / grp.min() if grp.min() > 0 else 1.0
+            short_pct = (df["format"] == "Short-form (<2 min)").mean() * 100
+            if ratio > 1.5:
+                fmt_obs = f"<b>{best_fmt}</b> generates <b>{ratio:.1f}x</b> more views/day than {worst_fmt}."
+                fmt_imp = f"Format is the biggest lever — bigger than topic or posting frequency."
+                if "Short-form" in best_fmt:
+                    fmt_rec = f"Short-form is {short_pct:.0f}% of uploads. Every 10% shift toward Shorts is an estimated {ratio*0.1:.1f}x lift on channel-wide avg views/day."
+                else:
+                    fmt_rec = f"Long-form dominates. Cut Shorts production. Reinvest in higher-quality long-form."
+                blocks.append(so_what_block(fmt_obs, fmt_imp, fmt_rec, ac))
+
+    # Block 3: Content decay
+    AGE_BUCKETS = [(0,30),(31,90),(91,365),(366,730),(731,9999)]
+    bucket_avgs = []
+    for lo, hi in AGE_BUCKETS:
+        mask = (df["video_age_days"] >= lo) & (df["video_age_days"] <= hi)
+        if mask.sum() >= 3:
+            bucket_avgs.append(df[mask]["views_per_day"].mean())
+    if len(bucket_avgs) >= 2:
+        decay_ratio = bucket_avgs[0] / bucket_avgs[-1] if bucket_avgs[-1] > 0 else 0
+        if decay_ratio > 10:
+            dec_obs = f"Fresh content (0–30d) averages <b>{decay_ratio:.0f}x</b> more views/day than content aged 2+ years."
+            dec_imp = "Catalog has almost no long-tail value. Revenue is 100% dependent on new upload cadence."
+            dec_rec = "Treat every upload window as critical. A 2-week posting gap costs disproportionately — model the revenue cliff."
+        elif decay_ratio > 3:
+            dec_obs = f"Fresh content averages <b>{decay_ratio:.1f}x</b> more views/day than aged content."
+            dec_imp = "Moderate decay. Some catalog value exists but it doesn't compound meaningfully."
+            dec_rec = "Build a Shorts strategy to reactivate old catalog clips. Zero production cost, potential long-tail upside."
+        else:
+            dec_obs = f"Content decay ratio is only <b>{decay_ratio:.1f}x</b> — one of the flattest in the dataset."
+            dec_imp = "Evergreen content. Catalog compounds over time — each video is a long-term asset."
+            dec_rec = "Prioritize production quality over upload frequency. One strong video outperforms five average ones."
+        blocks.append(so_what_block(dec_obs, dec_imp, dec_rec, ac))
+
+    return "".join(blocks)
+
+
 # ── Data helpers ───────────────────────────────────────────────────────────────
 def parse_sec(s: str) -> int:
     if not isinstance(s, str):
@@ -859,6 +950,13 @@ with tab4:
 
 # ── TAB 5: Insights & Recommendations ─────────────────────────────────────────
 with tab5:
+    st.markdown(f'<div class="sec-head">🎯 So What — Executive Summary</div>',
+                unsafe_allow_html=True)
+    st.caption("Observation → Implication → Recommendation. Three things a PM can act on today.")
+    if len(df_f) >= 10:
+        st.markdown(generate_so_what(df_f, channel_info.get("name", creator), AC),
+                    unsafe_allow_html=True)
+    st.divider()
     col_ins, col_rec = st.columns([1, 1])
 
     with col_ins:
