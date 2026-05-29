@@ -114,6 +114,7 @@ def calc_composite_score(df: pd.DataFrame) -> pd.Series:
     Uses min-max normalisation within the provided DataFrame.
     """
     def norm(s: pd.Series) -> pd.Series:
+        s = np.log1p(s.clip(lower=0))
         lo, hi = s.min(), s.max()
         if hi > lo:
             return (s - lo) / (hi - lo)

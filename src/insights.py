@@ -124,7 +124,8 @@ def generate_creator_insights(df: pd.DataFrame, name: str) -> str:
 
 
 def generate_comparison_insights(da: pd.DataFrame, db: pd.DataFrame,
-                                  name_a: str, name_b: str) -> str:
+                                  name_a: str, name_b: str,
+                                  music_a: bool = False, music_b: bool = False) -> str:
     """Returns HTML of 4 comparison insight blocks for two creators."""
     avg_a = da["view_count"].mean() / 1e6
     avg_b = db["view_count"].mean() / 1e6
@@ -136,7 +137,6 @@ def generate_comparison_insights(da: pd.DataFrame, db: pd.DataFrame,
     cad_b = calc_posting_cadence(db)
 
     view_winner = name_a if avg_a >= avg_b else name_b
-    view_loser = name_b if avg_a >= avg_b else name_a
     w_avg = max(avg_a, avg_b)
     l_avg = min(avg_a, avg_b)
     ratio = w_avg / l_avg if l_avg > 0 else 1.0
@@ -145,35 +145,93 @@ def generate_comparison_insights(da: pd.DataFrame, db: pd.DataFrame,
     w_eng = max(eng_a, eng_b)
     l_eng = min(eng_a, eng_b)
 
-    mom_winner = name_a if mom_a >= mom_b else name_b
-    cad_winner = name_a if cad_a >= cad_b else name_b
+    either_music = music_a or music_b
+    both_music = music_a and music_b
 
-    blocks = [
-        insight_block("RAW REACH",
+    # ── Block 1: Raw Reach ────────────────────────────────────────────────────
+    if either_music and not both_music:
+        music_name = name_a if music_a else name_b
+        yt_name = name_b if music_a else name_a
+        reach_body = (
+            f"{view_winner} leads on avg views/video: <b>{w_avg:.1f}M</b> vs <b>{l_avg:.1f}M</b> "
+            f"(<b>{ratio:.1f}x gap</b>). "
+            f"Comparing {music_name} (music catalog) to {yt_name} (YouTube creator) is cross-domain — "
+            f"music MV views accumulate passively over decades, not through algorithm-driven upload cadence."
+        )
+    else:
+        reach_body = (
             f"{view_winner} leads: <b>{w_avg:.1f}M avg views/video</b> vs <b>{l_avg:.1f}M</b> — "
             f"<b>{ratio:.1f}x gap</b>. "
             + (f"The size difference reflects brand scale and algorithm compounding over years, not just content quality."
                if ratio > 5 else
                f"Near-parity on reach. The real differentiation is engagement depth and content format efficiency.")
-        ),
-        insight_block("ENGAGEMENT BATTLE",
-            f"{eng_winner} wins engagement: <b>{w_eng:.2f}%</b> vs <b>{l_eng:.2f}%</b>. "
-            + (f"Different creator leads on engagement vs views — reach doesn't equal community depth. "
-               f"Brand deals should value {eng_winner} more per-view than raw numbers suggest."
-               if view_winner != eng_winner else
-               f"Same creator dominates both metrics — rare. Signals reach dominance AND audience resonance.")
-        ),
-        insight_block("MOMENTUM (Last 90 Days)",
+        )
+
+    # ── Block 2: Engagement ───────────────────────────────────────────────────
+    eng_body = (
+        f"{eng_winner} wins engagement: <b>{w_eng:.2f}%</b> vs <b>{l_eng:.2f}%</b>. "
+        + (f"Different creator leads on engagement vs views — reach doesn't equal community depth. "
+           f"Brand deals should value {eng_winner} more per-view than raw numbers suggest."
+           if view_winner != eng_winner else
+           f"Same creator dominates both metrics — rare. Signals reach dominance AND audience resonance.")
+    )
+
+    # ── Block 3: Momentum ─────────────────────────────────────────────────────
+    if either_music:
+        active_name = (name_b if music_a else name_a)
+        music_name = (name_a if music_a else name_b)
+        active_mom = mom_b if music_a else mom_a
+        mom_body = (
+            f"{music_name} hasn't uploaded recently — momentum metric reflects catalog decay, not creative output. "
+            f"{active_name}'s recent 90-day avg is <b>{active_mom:.2f}x</b> historical. "
+            f"Algorithm momentum only applies to active uploaders — comparing on this axis is apples to oranges."
+        )
+        if both_music:
+            mom_winner = name_a if mom_a >= mom_b else name_b
+            mom_body = (
+                f"Neither artist is actively uploading. Momentum reflects passive catalog performance only. "
+                f"{mom_winner} has a slightly higher recent-to-historical ratio "
+                f"(<b>{max(mom_a,mom_b):.2f}x</b> vs <b>{min(mom_a,mom_b):.2f}x</b>) — "
+                f"likely driven by a recent viral moment or playlist placement, not new content."
+            )
+    else:
+        mom_winner = name_a if mom_a >= mom_b else name_b
+        mom_body = (
             f"{mom_winner} is accelerating faster — recent avg is <b>{max(mom_a, mom_b):.2f}x</b> vs "
             f"<b>{min(mom_a, mom_b):.2f}x</b> historical. "
             f"Momentum is the leading indicator. The trailing 90 days predict next 6 months better than total view count."
-        ),
-        insight_block("POSTING CADENCE",
+        )
+
+    # ── Block 4: Cadence ──────────────────────────────────────────────────────
+    if either_music:
+        music_nm = name_a if music_a else name_b
+        yt_nm = name_b if music_a else name_a
+        yt_cad = cad_b if music_a else cad_a
+        if both_music:
+            cad_body = (
+                f"Both artists have near-zero upload cadence — catalog-only mode. "
+                f"YouTube Shorts repurposing existing MV footage is the only low-cost path back to algorithm surface area."
+            )
+        else:
+            cad_body = (
+                f"{yt_nm} posts <b>{yt_cad:.1f} videos/week</b>. "
+                f"{music_nm} uploads essentially nothing — the catalog earns on legacy reach alone. "
+                f"Cadence comparison is not meaningful here; the two creators operate on fundamentally different content models."
+            )
+    else:
+        cad_winner = name_a if cad_a >= cad_b else name_b
+        cad_body = (
             f"{cad_winner} posts <b>{max(cad_a, cad_b):.1f} videos/week</b> vs "
             f"<b>{min(cad_a, cad_b):.1f}</b>. "
             + (f"The frequency gap is a structural driver of the reach gap. Volume in the feed compounds over time."
                if max(cad_a, cad_b) > min(cad_a, cad_b) * 1.8 else
                f"Similar cadence — the view gap comes from content formula and brand scale, not volume alone.")
-        ),
+        )
+
+    blocks = [
+        insight_block("RAW REACH", reach_body),
+        insight_block("ENGAGEMENT BATTLE", eng_body),
+        insight_block("MOMENTUM (Last 90 Days)", mom_body),
+        insight_block("POSTING CADENCE", cad_body),
     ]
     return "\n".join(blocks)

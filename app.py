@@ -286,12 +286,44 @@ def so_what_block(obs: str, imp: str, rec: str, accent_color: str = "#FF0000") -
     </div>"""
 
 
-def generate_so_what(df: pd.DataFrame, creator_name: str, ac: str) -> str:
-    from src.metrics import calc_momentum, calc_posting_cadence
+def generate_so_what(df: pd.DataFrame, creator_name: str, ac: str, music: bool = False) -> str:
+    from src.metrics import calc_momentum
 
     blocks = []
 
-    # Block 1: Momentum
+    if music:
+        # Music artist: catalog-focused analysis
+        total_views = df["view_count"].sum()
+        days_since = int(df["video_age_days"].min())
+        top_mv = df.nlargest(1, "view_count").iloc[0]
+        top_pct = top_mv["view_count"] / total_views * 100
+        eng = df["engagement_rate"].mean() * 100
+
+        # Block 1: Catalog concentration
+        blocks.append(so_what_block(
+            f'Top MV ("{top_mv["title"][:40]}…") accounts for <b>{top_pct:.0f}%</b> of total catalog views.',
+            "Catalog is concentrated. One video carries disproportionate traffic weight.",
+            "Prioritize YouTube Shorts clips from the top-5 MVs to redistribute catalog traffic. Zero production cost.",
+            ac,
+        ))
+        # Block 2: Upload gap
+        if days_since > 365:
+            blocks.append(so_what_block(
+                f"Last upload was <b>{days_since} days ago</b> ({days_since//365} year{'s' if days_since//365 > 1 else ''} of silence).",
+                "No new content means no algorithm surface area. Catalog earns purely on legacy reach.",
+                "A single Shorts clip from existing MV footage could reactivate dormant subscribers at near-zero cost.",
+                ac,
+            ))
+        # Block 3: Engagement vs reach
+        blocks.append(so_what_block(
+            f"Average engagement rate is <b>{eng:.2f}%</b> across {len(df):,} videos.",
+            "Low engagement on music videos is normal — passive listening doesn't generate likes/comments.",
+            "Track comment volume on new drops as the real fandom signal. Engagement rate alone understates fan depth for music artists.",
+            ac,
+        ))
+        return "".join(blocks)
+
+    # YouTuber path
     momentum = calc_momentum(df)
     if momentum >= 1.1:
         mom_obs = f"90-day avg views/day is <b>{momentum:.2f}x</b> the all-time channel average."
@@ -307,24 +339,21 @@ def generate_so_what(df: pd.DataFrame, creator_name: str, ac: str) -> str:
         mom_rec = "Identify the inflection point. Revert to the last format that drove above-baseline performance."
     blocks.append(so_what_block(mom_obs, mom_imp, mom_rec, ac))
 
-    # Block 2: Format efficiency
     if "duration_sec" in df.columns and "format" in df.columns:
         grp = df.groupby("format")["views_per_day"].mean()
         if len(grp) > 1:
             best_fmt = grp.idxmax()
-            worst_fmt = grp.idxmin()
             ratio = grp.max() / grp.min() if grp.min() > 0 else 1.0
             short_pct = (df["format"] == "Short-form (<2 min)").mean() * 100
             if ratio > 1.5:
-                fmt_obs = f"<b>{best_fmt}</b> generates <b>{ratio:.1f}x</b> more views/day than {worst_fmt}."
-                fmt_imp = f"Format is the biggest lever — bigger than topic or posting frequency."
+                fmt_obs = f"<b>{best_fmt}</b> generates <b>{ratio:.1f}x</b> more views/day than the other format."
+                fmt_imp = "Format is the biggest lever — bigger than topic or posting frequency."
                 if "Short-form" in best_fmt:
-                    fmt_rec = f"Short-form is {short_pct:.0f}% of uploads. Every 10% shift toward Shorts is an estimated {ratio*0.1:.1f}x lift on channel-wide avg views/day."
+                    fmt_rec = f"Short-form is {short_pct:.0f}% of uploads. Every 10% shift toward Shorts is ~{ratio*0.1:.1f}x lift on channel-wide avg views/day."
                 else:
-                    fmt_rec = f"Long-form dominates. Cut Shorts production. Reinvest in higher-quality long-form."
+                    fmt_rec = "Long-form dominates. Cut Shorts production. Reinvest in higher-quality long-form."
                 blocks.append(so_what_block(fmt_obs, fmt_imp, fmt_rec, ac))
 
-    # Block 3: Content decay
     AGE_BUCKETS = [(0,30),(31,90),(91,365),(366,730),(731,9999)]
     bucket_avgs = []
     for lo, hi in AGE_BUCKETS:
@@ -1100,7 +1129,7 @@ with tab5:
                 unsafe_allow_html=True)
     st.caption("Observation → Implication → Recommendation. Three things a PM can act on today.")
     if len(df_f) >= 10:
-        st.markdown(generate_so_what(df_f, channel_info.get("name", creator), AC),
+        st.markdown(generate_so_what(df_f, channel_info.get("name", creator), AC, music=is_music),
                     unsafe_allow_html=True)
     st.divider()
     col_ins, col_rec = st.columns([1, 1])
@@ -1165,8 +1194,10 @@ with tab6:
         da["creator"] = creator_a
         db["creator"] = creator_b
         combined = pd.concat([da, db], ignore_index=True)
-        cmp_music = CREATORS[creator_a]["slug"] in MUSIC_ARTISTS and CREATORS[creator_b]["slug"] in MUSIC_ARTISTS
-        CA2, CB3 = ("#1DB954" if cmp_music else "#FF0000"), "#2979FF"
+        is_music_a = CREATORS[creator_a]["slug"] in MUSIC_ARTISTS
+        is_music_b = CREATORS[creator_b]["slug"] in MUSIC_ARTISTS
+        cmp_music = is_music_a and is_music_b
+        CA2, CB3 = ("#1DB954" if (is_music_a or cmp_music) else "#FF0000"), "#2979FF"
         CMAP = {creator_a: CA2, creator_b: CB3}
         cmp_CB = chart_cfg(cmp_music)
 
@@ -1263,7 +1294,8 @@ with tab6:
 
         st.divider()
         st.markdown(f'<div class="sec-head">Analysis</div>', unsafe_allow_html=True)
-        st.markdown(generate_comparison_insights(da, db, creator_a, creator_b),
+        st.markdown(generate_comparison_insights(da, db, creator_a, creator_b,
+                                                  music_a=is_music_a, music_b=is_music_b),
                     unsafe_allow_html=True)
 
 
