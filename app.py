@@ -593,16 +593,27 @@ if len(df_f) == 0:
 momentum = kpis["momentum"]
 mom_color = "#22C55E" if momentum > 1.1 else ("#EF4444" if momentum < 0.85 else "#F59E0B")
 mom_label = "↑ Growing" if momentum > 1.1 else ("↓ Declining" if momentum < 0.85 else "→ Stable")
-
 viral_hit_rate = (df_f["views_per_day"] >= df_f["views_per_day"].mean() * 2).mean() * 100
+clr = df_f["comment_rate"].mean() / df_f["like_rate"].mean() if df_f["like_rate"].mean() > 0 else 0
+
 adv_cols = st.columns(4)
-adv_data = [
-    ("MOMENTUM INDEX",    f"{momentum:.2f}x",         f"{mom_label} (90-day)",        mom_color),
-    ("VIRAL HIT RATE",    f"{viral_hit_rate:.0f}%",   "videos > 2x channel avg",      AC),
-    ("CADENCE",           f"{kpis['cadence']:.1f}/wk","avg videos per week",           "#E2E8F0"),
-    ("COMMENT / LIKE",    f"{kpis.get('clr', df_f['comment_rate'].mean()/df_f['like_rate'].mean() if df_f['like_rate'].mean()>0 else 0):.2f}x",
-                          "fandom depth proxy",                                         "#E2E8F0"),
-]
+if is_music:
+    days_since = int(df_f["video_age_days"].min())
+    total_views = df_f["view_count"].sum()
+    adv_data = [
+        ("CATALOG SIZE",      f"{len(df_f):,}",            "total music videos",           "#E2E8F0"),
+        ("CATALOG VIEWS",     f"{total_views/1e9:.2f}B" if total_views >= 1e9 else f"{total_views/1e6:.0f}M",
+                              "lifetime accumulated",                                        AC),
+        ("LAST RELEASE",      f"{days_since}d ago",        "days since newest upload",      "#F59E0B" if days_since > 365 else "#22C55E"),
+        ("COMMENT / LIKE",    f"{clr:.2f}x",               "fandom depth proxy",            "#E2E8F0"),
+    ]
+else:
+    adv_data = [
+        ("MOMENTUM INDEX",    f"{momentum:.2f}x",          f"{mom_label} (90-day)",         mom_color),
+        ("VIRAL HIT RATE",    f"{viral_hit_rate:.0f}%",    "videos > 2x channel avg",       AC),
+        ("CADENCE",           f"{kpis['cadence']:.1f}/wk", "avg videos per week",           "#E2E8F0"),
+        ("COMMENT / LIKE",    f"{clr:.2f}x",               "fandom depth proxy",            "#E2E8F0"),
+    ]
 for col, (label, val, sub, color) in zip(adv_cols, adv_data):
     col.markdown(adv_card(label, val, sub, color), unsafe_allow_html=True)
 
@@ -780,43 +791,62 @@ def detect_inflection_points(df: pd.DataFrame, window: int = 20, top_n: int = 3)
 
 
 with tab3:
-    st.markdown(f'<div class="sec-head">📈 Growth Trajectory — Views/Day Over Time</div>',
-                unsafe_allow_html=True)
+    traj_title = "🎵 Catalog View History — Total Views per MV" if is_music else "📈 Growth Trajectory — Views/Day Over Time"
+    traj_caption = "Music catalog sorted by release date. Y-axis = total lifetime views (not views/day)." if is_music else ""
+    st.markdown(f'<div class="sec-head">{traj_title}</div>', unsafe_allow_html=True)
+    if traj_caption:
+        st.caption(traj_caption)
     df_ts = df_f.sort_values("published_at").copy()
     df_ts["roll_vpd"] = df_ts["views_per_day"].rolling(20, center=True, min_periods=5).mean()
-    inflection_pts = detect_inflection_points(df_f)
+    inflection_pts = detect_inflection_points(df_f) if not is_music else pd.DataFrame()
 
     fig_ts = go.Figure()
-    fig_ts.add_trace(go.Scatter(
-        x=df_ts["published_at"], y=df_ts["views_per_day"] / 1e6,
-        mode="markers", name="Each video",
-        marker=dict(size=3, color="#3D3D50", opacity=0.5),
-        hovertemplate="%{customdata}<br>%{y:.2f}M/day<extra></extra>",
-        customdata=df_ts["title"],
-    ))
-    fig_ts.add_trace(go.Scatter(
-        x=df_ts["published_at"], y=df_ts["roll_vpd"] / 1e6,
-        mode="lines", name="20-video rolling avg",
-        line=dict(color=AC, width=2.5),
-    ))
-    for i, (_, pt) in enumerate(inflection_pts.iterrows()):
-        direction = "▲" if pt["slope_smooth"] > 0 else "▼"
-        fig_ts.add_annotation(
-            x=pt["published_at"], y=pt["roll_vpd"] / 1e6,
-            text=f"{direction} {pt['published_at'].strftime('%b %Y')}",
-            showarrow=True, arrowhead=2, arrowcolor="#FFD700", arrowwidth=1.5,
-            font=dict(size=11, color="#FFD700", family="monospace"),
-            bgcolor="#1A1A2E", bordercolor="#FFD700", borderwidth=1,
-            ax=0, ay=-50 - i * 30,
+    if is_music:
+        # music: show total view_count per MV, full history, no rolling avg
+        fig_ts.add_trace(go.Scatter(
+            x=df_ts["published_at"], y=df_ts["view_count"] / 1e6,
+            mode="markers", name="Each MV",
+            marker=dict(size=5, color=AC, opacity=0.7),
+            hovertemplate="%{customdata}<br>%{y:.1f}M total views<extra></extra>",
+            customdata=df_ts["title"],
+        ))
+        fig_ts.update_layout(
+            title="Catalog Total Views per MV (full history)",
+            yaxis_title="Total Views (M)", height=440,
+            xaxis_gridcolor="#222", yaxis_gridcolor="#222",
+            **CB,
         )
-    fig_ts.update_layout(
-        title="Views/Day — Growth Trajectory with Inflection Points",
-        yaxis_title="Views/Day (M)", height=440,
-        xaxis=dict(range=["2024-01-01", df_ts["published_at"].max()], gridcolor="#222"),
-        yaxis_gridcolor="#222",
-        legend=dict(orientation="h", y=1.05),
-        **CB,
-    )
+    else:
+        fig_ts.add_trace(go.Scatter(
+            x=df_ts["published_at"], y=df_ts["views_per_day"] / 1e6,
+            mode="markers", name="Each video",
+            marker=dict(size=3, color="#3D3D50", opacity=0.5),
+            hovertemplate="%{customdata}<br>%{y:.2f}M/day<extra></extra>",
+            customdata=df_ts["title"],
+        ))
+        fig_ts.add_trace(go.Scatter(
+            x=df_ts["published_at"], y=df_ts["roll_vpd"] / 1e6,
+            mode="lines", name="20-video rolling avg",
+            line=dict(color=AC, width=2.5),
+        ))
+        for i, (_, pt) in enumerate(inflection_pts.iterrows()):
+            direction = "▲" if pt["slope_smooth"] > 0 else "▼"
+            fig_ts.add_annotation(
+                x=pt["published_at"], y=pt["roll_vpd"] / 1e6,
+                text=f"{direction} {pt['published_at'].strftime('%b %Y')}",
+                showarrow=True, arrowhead=2, arrowcolor="#FFD700", arrowwidth=1.5,
+                font=dict(size=11, color="#FFD700", family="monospace"),
+                bgcolor="#1A1A2E", bordercolor="#FFD700", borderwidth=1,
+                ax=0, ay=-50 - i * 30,
+            )
+        fig_ts.update_layout(
+            title="Views/Day — Growth Trajectory with Inflection Points",
+            yaxis_title="Views/Day (M)", height=440,
+            xaxis=dict(range=["2024-01-01", df_ts["published_at"].max()], gridcolor="#222"),
+            yaxis_gridcolor="#222",
+            legend=dict(orientation="h", y=1.05),
+            **CB,
+        )
     st.plotly_chart(fig_ts, use_container_width=True)
 
     if not inflection_pts.empty:
@@ -886,9 +916,12 @@ with tab3:
         st.plotly_chart(fig, use_container_width=True)
 
     st.divider()
-    st.markdown(f'<div class="sec-head">⏳ Content Lifecycle — View Decay by Age</div>',
-                unsafe_allow_html=True)
-    st.caption("How views/day changes as content ages. Flat curve = evergreen. Steep drop = algorithm-dependent.")
+    lifecycle_title = "⏳ Catalog Longevity — Views by MV Age" if is_music else "⏳ Content Lifecycle — View Decay by Age"
+    lifecycle_caption = ("How total views distribute across the catalog by MV age. Older MVs still pulling views = strong catalog longevity."
+                         if is_music else
+                         "How views/day changes as content ages. Flat curve = evergreen. Steep drop = algorithm-dependent.")
+    st.markdown(f'<div class="sec-head">{lifecycle_title}</div>', unsafe_allow_html=True)
+    st.caption(lifecycle_caption)
 
     AGE_BUCKETS = [
         (0,   30,  "0–30 days"),

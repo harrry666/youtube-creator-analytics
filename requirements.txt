@@ -6,3 +6,4 @@ requests==2.34.2
 feedparser==6.0.12
 python-dotenv==1.2.2
 scipy==1.17.1
+colorthief==0.2.1
