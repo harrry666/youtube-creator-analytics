@@ -1,14 +1,14 @@
 # YouTube Creator Analytics Dashboard
 
-A production-grade analytics platform for YouTube creator performance analysis. Built to demonstrate product analytics skills for creator economy and media companies.
+An analytics dashboard for YouTube creator performance — built with live API data, no toy datasets.
 
-**Live data from YouTube Data API v3. No toy datasets.**
+**Live data from YouTube Data API v3.**
 
 ---
 
 ## What It Does
 
-This dashboard turns raw YouTube API data into actionable intelligence for creator teams and agencies. It answers the questions that matter in creator economy analytics:
+This dashboard turns raw YouTube API data into answers that actually matter for creator teams. It answers the questions that count in creator economy analytics:
 
 - Is this channel growing or contracting right now?
 - Which content format generates the most views per day?
@@ -48,7 +48,7 @@ Rule-based engine that generates prioritized, actionable recommendations:
 - Momentum recovery when channel is declining
 
 ### Executive Insights
-Dynamically generated insight blocks with specific numbers and direct conclusions — not generic observations. Each insight leads with data, ends with a decision.
+Dynamically generated insight blocks with specific numbers and direct conclusions. Each insight leads with data, ends with a decision.
 
 ### Interactive Filters (apply to all tabs)
 - Date range slider
@@ -101,13 +101,13 @@ Dynamically generated insight blocks with specific numbers and direct conclusion
 Short-form content generates **3.2x** more views/day than long-form. Videos with "$" in the title average **1.8x** the channel average. Momentum index of 1.01 — channel is flat, not growing, despite record-breaking individual videos.
 
 **iShowSpeed**
-Highest upload cadence of the five creators at **7.8 videos/week**. Hit rate of 38% — performance is driven by reaction content spikes, not consistent output. Comment-to-like ratio 3x higher than MrBeast — significantly deeper community engagement per view.
+Highest upload cadence at **7.8 videos/week**. Hit rate of 38% — performance is driven by reaction content spikes, not consistent output. Comment-to-like ratio 3x higher than MrBeast — significantly deeper community engagement per view.
 
 **Mark Rober**
-Lowest cadence (0.4 videos/week) but highest consistency score. Each video carries enormous weight — one miss tanks the quarter. Long-form dominates: 4.1x more views/day than his short-form content.
+Lowest cadence (0.4 videos/week) but highest consistency score. Each video carries enormous weight — one miss tanks the quarter. Long-form dominates: **4.1x** more views/day than his short-form content.
 
 **Jay Chou vs JJ Lin**
-Jay Chou's catalog averages 14.2x more views per video — driven by decades of catalog accumulation. JJ Lin leads on engagement rate (3.1% vs 1.8%). Different audience behavior: Jay Chou has passive reach, JJ Lin has active community.
+Jay Chou's catalog averages **14.2x** more views per video — driven by decades of catalog accumulation. JJ Lin leads on engagement rate (3.1% vs 1.8%). Different audience behavior: Jay Chou has passive reach, JJ Lin has active community.
 
 ---
 
