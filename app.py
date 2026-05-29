@@ -542,7 +542,74 @@ with tab2:
 
 
 # ── TAB 3: Career Arc ─────────────────────────────────────────────────────────
+def detect_inflection_points(df: pd.DataFrame, window: int = 20, top_n: int = 3) -> pd.DataFrame:
+    # exclude videos < 60 days old to avoid recency bias (new videos have inflated views/day)
+    d = df[df["video_age_days"] >= 60].sort_values("published_at").copy()
+    if len(d) < window:
+        return pd.DataFrame()
+    d["roll_vpd"] = d["views_per_day"].rolling(window, center=True, min_periods=5).mean()
+    d["slope"] = d["roll_vpd"].diff()
+    d["slope_smooth"] = d["slope"].rolling(10, center=True, min_periods=3).mean()
+    d["slope_delta"] = d["slope_smooth"].diff().abs()
+    valid = d.dropna(subset=["slope_delta", "roll_vpd"])
+    return valid.nlargest(top_n, "slope_delta").sort_values("published_at")
+
+
 with tab3:
+    st.markdown(f'<div class="sec-head">📈 Growth Trajectory — Views/Day Over Time</div>',
+                unsafe_allow_html=True)
+    df_ts = df_f.sort_values("published_at").copy()
+    df_ts["roll_vpd"] = df_ts["views_per_day"].rolling(20, center=True, min_periods=5).mean()
+    inflection_pts = detect_inflection_points(df_f)
+
+    fig_ts = go.Figure()
+    fig_ts.add_trace(go.Scatter(
+        x=df_ts["published_at"], y=df_ts["views_per_day"] / 1e6,
+        mode="markers", name="Each video",
+        marker=dict(size=3, color="#3D3D50", opacity=0.5),
+        hovertemplate="%{customdata}<br>%{y:.2f}M/day<extra></extra>",
+        customdata=df_ts["title"],
+    ))
+    fig_ts.add_trace(go.Scatter(
+        x=df_ts["published_at"], y=df_ts["roll_vpd"] / 1e6,
+        mode="lines", name="20-video rolling avg",
+        line=dict(color=AC, width=2.5),
+    ))
+    for _, pt in inflection_pts.iterrows():
+        fig_ts.add_vline(
+            x=pt["published_at"].timestamp() * 1000,
+            line_width=1.5, line_dash="dot", line_color="#FFD700",
+        )
+        fig_ts.add_annotation(
+            x=pt["published_at"], y=pt["roll_vpd"] / 1e6,
+            text=f"↑ inflection<br>{pt['published_at'].strftime('%Y-%m')}",
+            showarrow=True, arrowhead=2, arrowcolor="#FFD700",
+            font=dict(size=10, color="#FFD700"),
+            bgcolor="#1E1E2E", bordercolor="#FFD700", borderwidth=1,
+            ax=0, ay=-40,
+        )
+    fig_ts.update_layout(
+        title="Views/Day — Growth Trajectory with Inflection Points",
+        yaxis_title="Views/Day (M)", height=420,
+        xaxis_gridcolor="#222", yaxis_gridcolor="#222",
+        legend=dict(orientation="h", y=1.05),
+        **CB,
+    )
+    st.plotly_chart(fig_ts, use_container_width=True)
+
+    if not inflection_pts.empty:
+        cols_inf = st.columns(len(inflection_pts))
+        for i, (_, pt) in enumerate(inflection_pts.iterrows()):
+            with cols_inf[i]:
+                direction = "▲" if pt["slope_smooth"] > 0 else "▼"
+                st.metric(
+                    label=f"{direction} Inflection {i+1} — {pt['published_at'].strftime('%b %Y')}",
+                    value=f"{pt['roll_vpd']/1e6:.2f}M/day",
+                    delta=f"{pt['slope_smooth']/1e3:+.0f}K/day trend shift",
+                )
+
+    st.divider()
+
     c1, c2 = st.columns(2)
 
     with c1:
