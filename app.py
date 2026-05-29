@@ -575,23 +575,21 @@ with tab3:
         mode="lines", name="20-video rolling avg",
         line=dict(color=AC, width=2.5),
     ))
-    for _, pt in inflection_pts.iterrows():
-        fig_ts.add_vline(
-            x=pt["published_at"].timestamp() * 1000,
-            line_width=1.5, line_dash="dot", line_color="#FFD700",
-        )
+    for i, (_, pt) in enumerate(inflection_pts.iterrows()):
+        direction = "▲" if pt["slope_smooth"] > 0 else "▼"
         fig_ts.add_annotation(
             x=pt["published_at"], y=pt["roll_vpd"] / 1e6,
-            text=f"↑ inflection<br>{pt['published_at'].strftime('%Y-%m')}",
-            showarrow=True, arrowhead=2, arrowcolor="#FFD700",
-            font=dict(size=10, color="#FFD700"),
-            bgcolor="#1E1E2E", bordercolor="#FFD700", borderwidth=1,
-            ax=0, ay=-40,
+            text=f"{direction} {pt['published_at'].strftime('%b %Y')}",
+            showarrow=True, arrowhead=2, arrowcolor="#FFD700", arrowwidth=1.5,
+            font=dict(size=11, color="#FFD700", family="monospace"),
+            bgcolor="#1A1A2E", bordercolor="#FFD700", borderwidth=1,
+            ax=0, ay=-50 - i * 30,
         )
     fig_ts.update_layout(
         title="Views/Day — Growth Trajectory with Inflection Points",
-        yaxis_title="Views/Day (M)", height=420,
-        xaxis_gridcolor="#222", yaxis_gridcolor="#222",
+        yaxis_title="Views/Day (M)", height=440,
+        xaxis=dict(range=["2024-01-01", df_ts["published_at"].max()], gridcolor="#222"),
+        yaxis_gridcolor="#222",
         legend=dict(orientation="h", y=1.05),
         **CB,
     )
