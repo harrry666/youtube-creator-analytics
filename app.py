@@ -301,24 +301,25 @@ def generate_so_what(df: pd.DataFrame, creator_name: str, ac: str, music: bool =
 
         # Block 1: Catalog concentration
         blocks.append(so_what_block(
-            f'Top MV ("{top_mv["title"][:40]}…") accounts for <b>{top_pct:.0f}%</b> of total catalog views.',
-            "Catalog is concentrated. One video carries disproportionate traffic weight.",
-            "Prioritize YouTube Shorts clips from the top-5 MVs to redistribute catalog traffic. Zero production cost.",
+            f'"{top_mv["title"][:40]}…" alone accounts for <b>{top_pct:.0f}%</b> of total catalog views.',
+            "One video is doing most of the work. Everything else is a footnote.",
+            "Clip the top-5 MVs into Shorts. Spreads the traffic around with zero new production.",
             ac,
         ))
         # Block 2: Upload gap
         if days_since > 365:
+            yrs = days_since // 365
             blocks.append(so_what_block(
-                f"Last upload was <b>{days_since} days ago</b> ({days_since//365} year{'s' if days_since//365 > 1 else ''} of silence).",
-                "No new content means no algorithm surface area. Catalog earns purely on legacy reach.",
-                "A single Shorts clip from existing MV footage could reactivate dormant subscribers at near-zero cost.",
+                f"Last upload was <b>{days_since} days ago</b>. That's {yrs} year{'s' if yrs > 1 else ''} without anything new.",
+                "No new content means no algorithm visibility. The catalog earns on its own legacy, nothing more.",
+                "One Shorts clip from an existing MV is enough to get back in the feed. Costs basically nothing.",
                 ac,
             ))
         # Block 3: Engagement vs reach
         blocks.append(so_what_block(
-            f"Average engagement rate is <b>{eng:.2f}%</b> across {len(df):,} videos.",
-            "Low engagement on music videos is normal — passive listening doesn't generate likes/comments.",
-            "Track comment volume on new drops as the real fandom signal. Engagement rate alone understates fan depth for music artists.",
+            f"Average engagement rate across {len(df):,} videos is <b>{eng:.2f}%</b>.",
+            "Music video engagement is low by default. People listen and leave. That's normal.",
+            "For music artists, comment volume on a new release tells you more than engagement rate. Watch that number instead.",
             ac,
         ))
         return "".join(blocks)
@@ -327,16 +328,16 @@ def generate_so_what(df: pd.DataFrame, creator_name: str, ac: str, music: bool =
     momentum = calc_momentum(df)
     if momentum >= 1.1:
         mom_obs = f"90-day avg views/day is <b>{momentum:.2f}x</b> the all-time channel average."
-        mom_imp = "Channel is actively accelerating — algorithm is feeding it."
-        mom_rec = "Double down on what's working now. Don't experiment mid-momentum."
+        mom_imp = "The channel is gaining speed. The algorithm is in its favor right now."
+        mom_rec = "Keep doing what's working. Not the time to shake things up."
     elif momentum >= 0.85:
-        mom_obs = f"90-day avg views/day is <b>{momentum:.2f}x</b> the all-time average."
-        mom_imp = "Channel is stable but not growing. Plateau risk if no format change."
-        mom_rec = "Test one new content format this quarter. Measure against current baseline."
+        mom_obs = f"90-day avg views/day is <b>{momentum:.2f}x</b> the all-time average. Flat."
+        mom_imp = "Stable but not growing. If nothing changes, it'll start dipping."
+        mom_rec = "Try a different format this quarter and see if it moves the needle."
     else:
-        mom_obs = f"90-day avg views/day is only <b>{momentum:.2f}x</b> the all-time average."
-        mom_imp = "Channel is declining. Recent uploads are underperforming the historical baseline."
-        mom_rec = "Identify the inflection point. Revert to the last format that drove above-baseline performance."
+        mom_obs = f"90-day avg views/day is <b>{momentum:.2f}x</b> the all-time average."
+        mom_imp = "The channel is losing ground. Recent uploads aren't hitting the historical average."
+        mom_rec = "Find where the numbers turned and go back to what was working before that point."
     blocks.append(so_what_block(mom_obs, mom_imp, mom_rec, ac))
 
     if "duration_sec" in df.columns and "format" in df.columns:
@@ -346,12 +347,12 @@ def generate_so_what(df: pd.DataFrame, creator_name: str, ac: str, music: bool =
             ratio = grp.max() / grp.min() if grp.min() > 0 else 1.0
             short_pct = (df["format"] == "Short-form (<2 min)").mean() * 100
             if ratio > 1.5:
-                fmt_obs = f"<b>{best_fmt}</b> generates <b>{ratio:.1f}x</b> more views/day than the other format."
-                fmt_imp = "Format is the biggest lever — bigger than topic or posting frequency."
+                fmt_obs = f"<b>{best_fmt}</b> gets <b>{ratio:.1f}x</b> more views/day than the other format."
+                fmt_imp = "Format is the biggest driver here. More than topic. More than cadence."
                 if "Short-form" in best_fmt:
-                    fmt_rec = f"Short-form is {short_pct:.0f}% of uploads. Every 10% shift toward Shorts is ~{ratio*0.1:.1f}x lift on channel-wide avg views/day."
+                    fmt_rec = f"Short-form is only {short_pct:.0f}% of uploads. Every 10% shift toward Shorts adds roughly {ratio*0.1:.1f}x to channel-wide avg views/day."
                 else:
-                    fmt_rec = "Long-form dominates. Cut Shorts production. Reinvest in higher-quality long-form."
+                    fmt_rec = "Long-form wins clearly. Pull back on Shorts and put that time into longer videos."
                 blocks.append(so_what_block(fmt_obs, fmt_imp, fmt_rec, ac))
 
     AGE_BUCKETS = [(0,30),(31,90),(91,365),(366,730),(731,9999)]
@@ -364,16 +365,16 @@ def generate_so_what(df: pd.DataFrame, creator_name: str, ac: str, music: bool =
         decay_ratio = bucket_avgs[0] / bucket_avgs[-1] if bucket_avgs[-1] > 0 else 0
         if decay_ratio > 10:
             dec_obs = f"Fresh content (0–30d) averages <b>{decay_ratio:.0f}x</b> more views/day than content aged 2+ years."
-            dec_imp = "Catalog has almost no long-tail value. Revenue is 100% dependent on new upload cadence."
-            dec_rec = "Treat every upload window as critical. A 2-week posting gap costs disproportionately — model the revenue cliff."
+            dec_imp = "Old videos are basically invisible. Everything depends on what goes up next."
+            dec_rec = "Every upload matters a lot. A two-week gap hurts more than it looks. Treat the schedule as non-negotiable."
         elif decay_ratio > 3:
             dec_obs = f"Fresh content averages <b>{decay_ratio:.1f}x</b> more views/day than aged content."
-            dec_imp = "Moderate decay. Some catalog value exists but it doesn't compound meaningfully."
-            dec_rec = "Build a Shorts strategy to reactivate old catalog clips. Zero production cost, potential long-tail upside."
+            dec_imp = "Old videos still get some traction but they don't really compound. The catalog has value but it's not growing on its own."
+            dec_rec = "Shorts from old clips could bring some of that catalog back. Costs nothing to try."
         else:
-            dec_obs = f"Content decay ratio is only <b>{decay_ratio:.1f}x</b> — one of the flattest in the dataset."
-            dec_imp = "Evergreen content. Catalog compounds over time — each video is a long-term asset."
-            dec_rec = "Prioritize production quality over upload frequency. One strong video outperforms five average ones."
+            dec_obs = f"Content decay ratio is only <b>{decay_ratio:.1f}x</b>. One of the flattest in this dataset."
+            dec_imp = "Content holds its value over time. Old videos still pull views. That's rare."
+            dec_rec = "Quality over quantity. One well-made video beats five average ones at this decay rate."
         blocks.append(so_what_block(dec_obs, dec_imp, dec_rec, ac))
 
     return "".join(blocks)

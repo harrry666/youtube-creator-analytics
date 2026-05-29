@@ -35,36 +35,35 @@ def generate_creator_insights(df: pd.DataFrame, name: str) -> str:
     if momentum > 1.1:
         m_label, m_body = "🟢 Accelerating", (
             f"Recent 90-day avg is <b>{momentum:.2f}x</b> the all-time average. "
-            f"The current content formula is working — momentum compounds. Do not change strategy mid-run."
+            f"Whatever {name} is doing right now is working. Don't change it."
         )
     elif momentum < 0.85:
         m_label, m_body = "🔴 Declining", (
-            f"Recent 90-day avg is only <b>{momentum:.2f}x</b> the all-time average. "
-            f"Channel is contracting. Audit the last 10 videos — identify if the inflection is format, frequency, or external."
+            f"Recent 90-day avg is <b>{momentum:.2f}x</b> the all-time average. "
+            f"The channel is losing ground. Look at the last 10 uploads and figure out where it turned."
         )
     else:
         m_label, m_body = "🟡 Stable", (
-            f"Recent 90-day avg is <b>{momentum:.2f}x</b> the all-time average — flat. "
-            f"No clear growth signal. This is the moment to experiment with a new format before numbers decline."
+            f"Recent 90-day avg is <b>{momentum:.2f}x</b> the all-time average. Flat. "
+            f"No growth signal right now. Try something different before the numbers start dipping."
         )
-    blocks.append(insight_block("MOMENTUM", f"{m_label} — {m_body}"))
+    blocks.append(insight_block("MOMENTUM", f"{m_label}. {m_body}"))
 
     # 2. Hit rate
     if hit_rate > 65:
         hr_body = (
             f"<b>{hit_rate:.0f}%</b> of videos beat the channel median. "
-            f"Exceptional consistency — {name} rarely releases a flop. "
-            f"This is the most underrated metric for long-term growth."
+            f"That's unusually consistent. Most creators have a lot more misses mixed in."
         )
     elif hit_rate > 45:
         hr_body = (
-            f"<b>{hit_rate:.0f}%</b> of videos beat the channel median — average range. "
-            f"About half the catalog is underperforming. Identify the bottom quartile and find the pattern."
+            f"<b>{hit_rate:.0f}%</b> of videos beat the channel median. "
+            f"About half the catalog is underperforming. Worth digging into what those videos have in common."
         )
     else:
         hr_body = (
-            f"Only <b>{hit_rate:.0f}%</b> of videos beat the channel median. "
-            f"Performance is driven by a few viral hits. The long tail is dead weight pulling averages down."
+            f"<b>{hit_rate:.0f}%</b> of videos beat the channel median. "
+            f"A few big hits are carrying the whole channel. Most of the catalog isn't doing much."
         )
     blocks.append(insight_block("HIT RATE", hr_body))
 
@@ -73,30 +72,29 @@ def generate_creator_insights(df: pd.DataFrame, name: str) -> str:
         fmt = df.groupby("format")["views_per_day"].mean()
         best = fmt.idxmax()
         ratio = fmt.max() / fmt.min() if fmt.min() > 0 else 1.0
+        gap_note = "That gap is big enough to act on." if ratio > 3 else "Worth testing more systematically this quarter."
         blocks.append(insight_block("FORMAT VERDICT",
-            f"<b>{best}</b> generates <b>{ratio:.1f}x</b> more views/day than the other format. "
-            f"The algorithm is giving a clear signal — the channel should lean harder into {best.lower()} content. "
-            f"{'At {ratio:.1f}x difference, this is not subtle.' if ratio > 3 else 'The gap is real but not decisive — test both formats this quarter.'}"
+            f"<b>{best}</b> gets <b>{ratio:.1f}x</b> more views/day than the other format. "
+            f"{gap_note}"
         ))
 
     # 4. Posting cadence
     if cadence >= 2.0:
         cad_body = (
             f"<b>{cadence:.1f} videos/week</b>. "
-            f"High cadence = top-of-feed dominance. This is how {name} owns the algorithm. "
-            f"Consistency at this volume is a structural moat — hard to replicate."
+            f"Staying in the feed that consistently is how {name} keeps the algorithm happy. Hard to compete with."
         )
     elif cadence >= 0.7:
         cad_body = (
             f"<b>{cadence:.1f} videos/week</b>. "
-            f"Moderate cadence — enough to maintain algorithm signal. "
-            f"There's headroom to increase frequency with short-form content without sacrificing production quality."
+            f"Enough to stay in the algorithm's rotation. "
+            f"There's room to add Shorts between uploads without touching the main production schedule."
         )
     else:
         cad_body = (
-            f"Only <b>{cadence:.1f} videos/week</b>. "
-            f"Low frequency. Each video carries enormous weight — one underperformer tanks the quarter. "
-            f"Either accept the risk or introduce short-form to maintain feed presence."
+            f"<b>{cadence:.1f} videos/week</b>. Very low. "
+            f"Each upload carries a lot of pressure. One bad video and the whole quarter suffers. "
+            f"A few Shorts between releases would help."
         )
     blocks.append(insight_block("CADENCE", cad_body))
 
@@ -104,19 +102,20 @@ def generate_creator_insights(df: pd.DataFrame, name: str) -> str:
     if clr > 0.06:
         fd_body = (
             f"Comment-to-like ratio: <b>{clr:.3f}</b>. "
-            f"The audience argues, debates, and reacts in comments — not just passive clickers. "
-            f"This community converts to long-term subscribers and merch buyers."
+            f"People are actually talking in the comments, not just watching and leaving. "
+            f"That's a more loyal audience than the view numbers suggest."
         )
     elif clr > 0.02:
         fd_body = (
             f"Comment-to-like ratio: <b>{clr:.3f}</b>. "
-            f"Moderate engagement depth. Viewers like but rarely comment — typical for broad entertainment content."
+            f"Viewers like and move on. Not a lot of conversation happening. "
+            f"Normal for mainstream entertainment, but there's room to activate the audience more."
         )
     else:
         fd_body = (
             f"Comment-to-like ratio: <b>{clr:.3f}</b>. "
-            f"Very passive audience. High reach but low emotional investment. "
-            f"Add a question or controversy in the first 30 seconds to activate comments."
+            f"People are mostly watching without reacting. Reach is high but nobody's really invested. "
+            f"Opening with a direct question or a hot take in the first 30 seconds usually helps."
         )
     blocks.append(insight_block("FANDOM DEPTH", fd_body))
 
@@ -153,27 +152,30 @@ def generate_comparison_insights(da: pd.DataFrame, db: pd.DataFrame,
         music_name = name_a if music_a else name_b
         yt_name = name_b if music_a else name_a
         reach_body = (
-            f"{view_winner} leads on avg views/video: <b>{w_avg:.1f}M</b> vs <b>{l_avg:.1f}M</b> "
-            f"(<b>{ratio:.1f}x gap</b>). "
-            f"Comparing {music_name} (music catalog) to {yt_name} (YouTube creator) is cross-domain — "
-            f"music MV views accumulate passively over decades, not through algorithm-driven upload cadence."
+            f"{view_winner} averages <b>{w_avg:.1f}M views/video</b> vs <b>{l_avg:.1f}M</b>, a {ratio:.1f}x gap. "
+            f"Worth noting: {music_name} is a music artist and {yt_name} is a YouTube creator. "
+            f"Music MV views build up over decades on their own. The comparison is more complicated than the number makes it look."
         )
     else:
+        if ratio > 5:
+            reach_note = f"That gap comes from years of brand scale and algorithm compounding, not just better content."
+        else:
+            reach_note = f"Roughly the same reach. The real difference shows up in engagement and format efficiency."
         reach_body = (
-            f"{view_winner} leads: <b>{w_avg:.1f}M avg views/video</b> vs <b>{l_avg:.1f}M</b> — "
-            f"<b>{ratio:.1f}x gap</b>. "
-            + (f"The size difference reflects brand scale and algorithm compounding over years, not just content quality."
-               if ratio > 5 else
-               f"Near-parity on reach. The real differentiation is engagement depth and content format efficiency.")
+            f"{view_winner} leads: <b>{w_avg:.1f}M avg views/video</b> vs <b>{l_avg:.1f}M</b> ({ratio:.1f}x). "
+            f"{reach_note}"
         )
 
     # ── Block 2: Engagement ───────────────────────────────────────────────────
+    if view_winner != eng_winner:
+        eng_note = (
+            f"Different creator wins on engagement vs views. Reach and community depth don't always go together. "
+            f"If you're a brand looking at CPM, {eng_winner} is undervalued by the raw numbers."
+        )
+    else:
+        eng_note = "Same creator wins both. That's unusual. Usually there's a trade-off between reach and engagement. Not here."
     eng_body = (
-        f"{eng_winner} wins engagement: <b>{w_eng:.2f}%</b> vs <b>{l_eng:.2f}%</b>. "
-        + (f"Different creator leads on engagement vs views — reach doesn't equal community depth. "
-           f"Brand deals should value {eng_winner} more per-view than raw numbers suggest."
-           if view_winner != eng_winner else
-           f"Same creator dominates both metrics — rare. Signals reach dominance AND audience resonance.")
+        f"{eng_winner} wins engagement: <b>{w_eng:.2f}%</b> vs <b>{l_eng:.2f}%</b>. {eng_note}"
     )
 
     # ── Block 3: Momentum ─────────────────────────────────────────────────────
@@ -182,24 +184,23 @@ def generate_comparison_insights(da: pd.DataFrame, db: pd.DataFrame,
         music_name = (name_a if music_a else name_b)
         active_mom = mom_b if music_a else mom_a
         mom_body = (
-            f"{music_name} hasn't uploaded recently — momentum metric reflects catalog decay, not creative output. "
+            f"{music_name} hasn't uploaded in a while, so their momentum number just reflects old catalog slowly fading. "
             f"{active_name}'s recent 90-day avg is <b>{active_mom:.2f}x</b> historical. "
-            f"Algorithm momentum only applies to active uploaders — comparing on this axis is apples to oranges."
+            f"Momentum only means something for people who are actively uploading."
         )
         if both_music:
             mom_winner = name_a if mom_a >= mom_b else name_b
             mom_body = (
-                f"Neither artist is actively uploading. Momentum reflects passive catalog performance only. "
-                f"{mom_winner} has a slightly higher recent-to-historical ratio "
-                f"(<b>{max(mom_a,mom_b):.2f}x</b> vs <b>{min(mom_a,mom_b):.2f}x</b>) — "
-                f"likely driven by a recent viral moment or playlist placement, not new content."
+                f"Neither artist is actively uploading. The momentum numbers just reflect how their old catalogs are holding up. "
+                f"{mom_winner} has a slightly higher ratio (<b>{max(mom_a,mom_b):.2f}x</b> vs <b>{min(mom_a,mom_b):.2f}x</b>). "
+                f"Probably a playlist pick-up or a viral moment, not anything they did."
             )
     else:
         mom_winner = name_a if mom_a >= mom_b else name_b
         mom_body = (
-            f"{mom_winner} is accelerating faster — recent avg is <b>{max(mom_a, mom_b):.2f}x</b> vs "
-            f"<b>{min(mom_a, mom_b):.2f}x</b> historical. "
-            f"Momentum is the leading indicator. The trailing 90 days predict next 6 months better than total view count."
+            f"{mom_winner}'s channel is moving faster right now. "
+            f"Recent avg is <b>{max(mom_a, mom_b):.2f}x</b> vs <b>{min(mom_a, mom_b):.2f}x</b> historical. "
+            f"What happened in the last 90 days tells you more about where these channels are headed than the all-time totals do."
         )
 
     # ── Block 4: Cadence ──────────────────────────────────────────────────────
@@ -209,23 +210,23 @@ def generate_comparison_insights(da: pd.DataFrame, db: pd.DataFrame,
         yt_cad = cad_b if music_a else cad_a
         if both_music:
             cad_body = (
-                f"Both artists have near-zero upload cadence — catalog-only mode. "
-                f"YouTube Shorts repurposing existing MV footage is the only low-cost path back to algorithm surface area."
+                f"Neither artist is uploading. Both are running on catalog alone. "
+                f"YouTube Shorts made from existing MV clips would be the easiest way back into the algorithm without producing anything new."
             )
         else:
             cad_body = (
-                f"{yt_nm} posts <b>{yt_cad:.1f} videos/week</b>. "
-                f"{music_nm} uploads essentially nothing — the catalog earns on legacy reach alone. "
-                f"Cadence comparison is not meaningful here; the two creators operate on fundamentally different content models."
+                f"{yt_nm} posts <b>{yt_cad:.1f} videos/week</b>. {music_nm} hasn't really uploaded anything. "
+                f"Comparing cadence here doesn't make much sense. They're operating on completely different models."
             )
     else:
         cad_winner = name_a if cad_a >= cad_b else name_b
+        if max(cad_a, cad_b) > min(cad_a, cad_b) * 1.8:
+            cad_note = "More uploads means more chances to show up in the feed. The posting gap is a big part of why the reach gap exists."
+        else:
+            cad_note = "Similar posting pace. The view difference is about content formula and brand size, not how often they upload."
         cad_body = (
-            f"{cad_winner} posts <b>{max(cad_a, cad_b):.1f} videos/week</b> vs "
-            f"<b>{min(cad_a, cad_b):.1f}</b>. "
-            + (f"The frequency gap is a structural driver of the reach gap. Volume in the feed compounds over time."
-               if max(cad_a, cad_b) > min(cad_a, cad_b) * 1.8 else
-               f"Similar cadence — the view gap comes from content formula and brand scale, not volume alone.")
+            f"{cad_winner} posts <b>{max(cad_a, cad_b):.1f} videos/week</b> vs <b>{min(cad_a, cad_b):.1f}</b>. "
+            f"{cad_note}"
         )
 
     blocks = [
