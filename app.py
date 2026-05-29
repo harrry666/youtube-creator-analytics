@@ -682,6 +682,76 @@ with tab3:
         st.plotly_chart(fig, use_container_width=True)
 
     st.divider()
+    st.markdown(f'<div class="sec-head">⏳ Content Lifecycle — View Decay by Age</div>',
+                unsafe_allow_html=True)
+    st.caption("How views/day changes as content ages. Flat curve = evergreen. Steep drop = algorithm-dependent.")
+
+    AGE_BUCKETS = [
+        (0,   30,  "0–30 days"),
+        (31,  90,  "31–90 days"),
+        (91,  365, "91–365 days"),
+        (366, 730, "1–2 years"),
+        (731, 9999,"2+ years"),
+    ]
+    bucket_rows = []
+    for lo, hi, label in AGE_BUCKETS:
+        mask = (df_f["video_age_days"] >= lo) & (df_f["video_age_days"] <= hi)
+        if mask.sum() >= 3:
+            bucket_rows.append({
+                "Age Bucket": label,
+                "avg_vpd": df_f[mask]["views_per_day"].mean(),
+                "median_vpd": df_f[mask]["views_per_day"].median(),
+                "n": int(mask.sum()),
+            })
+    if bucket_rows:
+        bucket_df = pd.DataFrame(bucket_rows)
+        fresh_vpd  = bucket_df.iloc[0]["avg_vpd"]
+        oldest_vpd = bucket_df.iloc[-1]["avg_vpd"]
+        decay_ratio = fresh_vpd / oldest_vpd if oldest_vpd > 0 else 0
+        if decay_ratio > 5:
+            decay_label, decay_color = "Front-Loaded", "#FF5252"
+        elif decay_ratio > 2:
+            decay_label, decay_color = "Moderate Decay", "#FB8C00"
+        else:
+            decay_label, decay_color = "Evergreen", "#43A047"
+
+        lc1, lc2, lc3 = st.columns(3)
+        with lc1:
+            st.metric("Fresh Content (0–30d) Avg Views/Day",
+                      f"{fresh_vpd/1e6:.2f}M" if fresh_vpd >= 1e6 else f"{fresh_vpd/1e3:.0f}K")
+        with lc2:
+            st.metric("Aged Content (2y+) Avg Views/Day",
+                      f"{oldest_vpd/1e6:.2f}M" if oldest_vpd >= 1e6 else f"{oldest_vpd/1e3:.0f}K")
+        with lc3:
+            st.metric("Decay Ratio", f"{decay_ratio:.1f}x",
+                      delta=decay_label, delta_color="off")
+
+        fig_decay = go.Figure()
+        fig_decay.add_trace(go.Bar(
+            x=bucket_df["Age Bucket"], y=bucket_df["avg_vpd"] / 1e6,
+            name="Avg Views/Day",
+            marker_color=[AC, "#CC3300", "#994400", "#665500", "#444422"][: len(bucket_df)],
+            text=[f"{v/1e6:.2f}M<br>n={n}" if v >= 1e6 else f"{v/1e3:.0f}K<br>n={n}"
+                  for v, n in zip(bucket_df["avg_vpd"], bucket_df["n"])],
+            textposition="outside",
+            hovertemplate="%{x}<br>Avg: %{y:.2f}M/day<extra></extra>",
+        ))
+        fig_decay.add_trace(go.Scatter(
+            x=bucket_df["Age Bucket"], y=bucket_df["median_vpd"] / 1e6,
+            mode="lines+markers", name="Median Views/Day",
+            line=dict(color="#FFD700", width=2, dash="dot"),
+            marker=dict(size=8),
+        ))
+        fig_decay.update_layout(
+            title=f"View Decay Curve — {decay_label} ({decay_ratio:.1f}x fresh-to-aged ratio)",
+            yaxis_title="Views/Day (M)", height=360,
+            xaxis_gridcolor="#222", yaxis_gridcolor="#222",
+            legend=dict(orientation="h", y=1.05),
+            **CB,
+        )
+        st.plotly_chart(fig_decay, use_container_width=True)
+
+    st.divider()
     st.markdown(f'<div class="sec-head">📉 Performance Dips — When Things Dropped</div>',
                 unsafe_allow_html=True)
     st.caption("Quarters where avg views dropped >35% from rolling 4-quarter peak.")
