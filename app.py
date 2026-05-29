@@ -1,5 +1,7 @@
 import re
+import io
 import json
+import colorsys
 import urllib.parse
 from datetime import date
 
@@ -10,6 +12,7 @@ import plotly.graph_objects as go
 import requests
 import feedparser
 import streamlit as st
+from colorthief import ColorThief
 
 from src.metrics import (
     clean_and_validate, calc_composite_score, calc_virality_score,
@@ -54,28 +57,85 @@ GRADE_COLORS = {"S": "#FFD700", "A": "#22C55E", "B": "#3B82F6", "C": "#F59E0B", 
 PRIORITY_COLORS = {"HIGH": "#EF4444", "MEDIUM": "#F59E0B", "LOW": "#22C55E"}
 
 
+# ── Color extraction ───────────────────────────────────────────────────────────
+@st.cache_data(show_spinner=False)
+def extract_accent_color(avatar_url: str) -> str:
+    try:
+        r = requests.get(avatar_url, timeout=5)
+        ct = ColorThief(io.BytesIO(r.content))
+        palette = ct.get_palette(color_count=8, quality=1)
+        best, best_score = palette[0], -1
+        for rgb in palette:
+            rv, gv, bv = [x / 255 for x in rgb]
+            h, s, v = colorsys.rgb_to_hsv(rv, gv, bv)
+            score = s * v if v > 0.35 and s > 0.2 else 0
+            if score > best_score:
+                best, best_score = rgb, score
+        # ensure minimum brightness
+        rv, gv, bv = [x / 255 for x in best]
+        h, s, v = colorsys.rgb_to_hsv(rv, gv, bv)
+        v = max(v, 0.55)
+        s = max(s, 0.4)
+        rgb_bright = tuple(int(x * 255) for x in colorsys.hsv_to_rgb(h, s, v))
+        return "#{:02x}{:02x}{:02x}".format(*rgb_bright)
+    except Exception:
+        return "#FF0000"
+
+
 # ── CSS design system ──────────────────────────────────────────────────────────
-def build_css(ac: str) -> str:
+def build_css(ac: str, banner_url: str = "") -> str:
+    bg_css = f"""
+    .stApp {{
+        background-image: url('{banner_url}');
+        background-size: cover;
+        background-attachment: fixed;
+        background-position: center top;
+    }}
+    .stApp::before {{
+        content: '';
+        position: fixed;
+        inset: 0;
+        background: rgba(6, 6, 15, 0.72);
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+        z-index: 0;
+        pointer-events: none;
+    }}
+    """ if banner_url else ""
+
     return f"""<style>
+{bg_css}
 [data-testid="stSidebar"] {{
-    background: #0F0F17;
-    border-right: 1px solid #1E1E2E;
+    background: rgba(8, 8, 20, 0.82);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-right: 1px solid rgba(255,255,255,0.07);
 }}
 [data-testid="stSidebar"] .stMarkdown p {{ color: #94A3B8; font-size: 0.8rem; }}
+[data-testid="stMain"] > div {{
+    position: relative; z-index: 1;
+}}
 .kpi-card {{
-    background: #14141C; border: 1px solid #1E1E2E; border-radius: 14px;
+    background: rgba(15, 15, 30, 0.65);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 14px;
     padding: 20px 16px; text-align: center; height: 100%; min-height: 110px;
 }}
-.kpi-label {{ color: #64748B; font-size: 0.62rem; text-transform: uppercase;
+.kpi-label {{ color: #94A3B8; font-size: 0.62rem; text-transform: uppercase;
               letter-spacing: 2px; margin-bottom: 8px; }}
 .kpi-value {{ color: {ac}; font-size: 2.2rem; font-weight: 900; line-height: 1; }}
-.kpi-sub   {{ color: #475569; font-size: 0.7rem; margin-top: 6px; }}
+.kpi-sub   {{ color: #64748B; font-size: 0.7rem; margin-top: 6px; }}
 .kpi-trend-up   {{ color: #22C55E; font-size: 0.7rem; font-weight: 700; margin-top: 4px; }}
 .kpi-trend-down {{ color: #EF4444; font-size: 0.7rem; font-weight: 700; margin-top: 4px; }}
 .kpi-trend-flat {{ color: #64748B; font-size: 0.7rem; margin-top: 4px; }}
 .adv-card {{
-    background: #0F0F17; border: 1px solid #1E1E2E; border-radius: 12px;
-    padding: 16px; text-align: center;
+    background: rgba(10, 10, 22, 0.65);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 12px; padding: 16px; text-align: center;
 }}
 .adv-label {{ color: #64748B; font-size: 0.6rem; text-transform: uppercase;
               letter-spacing: 1.5px; margin-bottom: 6px; }}
@@ -87,8 +147,11 @@ def build_css(ac: str) -> str:
     margin: 24px 0 12px; text-transform: uppercase; letter-spacing: 1px;
 }}
 .insight-box {{
-    background: #14141C; border: 1px solid #1E1E2E; border-radius: 12px;
-    padding: 18px 22px; margin: 8px 0;
+    background: rgba(15, 15, 30, 0.65);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 12px; padding: 18px 22px; margin: 8px 0;
 }}
 .insight-head {{
     color: {ac}; font-size: 0.65rem; font-weight: 800;
@@ -96,9 +159,14 @@ def build_css(ac: str) -> str:
 }}
 .insight-body {{ color: #CBD5E1; font-size: 0.9rem; line-height: 1.7; }}
 .rec-card {{
-    background: #14141C; border-left: 4px solid; border-radius: 10px;
+    background: rgba(15, 15, 30, 0.65);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border-left: 4px solid; border-radius: 10px;
     padding: 16px 20px; margin: 10px 0;
-    border-top: 1px solid #1E1E2E; border-right: 1px solid #1E1E2E; border-bottom: 1px solid #1E1E2E;
+    border-top: 1px solid rgba(255,255,255,0.06);
+    border-right: 1px solid rgba(255,255,255,0.06);
+    border-bottom: 1px solid rgba(255,255,255,0.06);
 }}
 .rec-priority {{ font-size: 0.62rem; font-weight: 800; text-transform: uppercase; letter-spacing: 2px; }}
 .rec-title   {{ font-size: 0.97rem; font-weight: 700; color: #E2E8F0; margin: 5px 0 4px; }}
@@ -110,15 +178,51 @@ def build_css(ac: str) -> str:
 .thumb-stat  {{ font-size: 0.78rem; color: {ac}; font-weight: 700; margin-top: 3px; }}
 .thumb-badge {{ font-size: 0.65rem; color: #7C3AED; margin-top: 2px; }}
 .dip-row {{
-    background: #14141C; border: 1px solid #1E1E2E; border-radius: 8px;
-    padding: 12px 16px; margin: 6px 0;
+    background: rgba(15, 15, 30, 0.65);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 8px; padding: 12px 16px; margin: 6px 0;
 }}
-.badge-ok   {{ background: #14532D; color: #4ADE80; padding: 3px 10px;
+.badge-ok   {{ background: rgba(20,83,45,0.8); color: #4ADE80; padding: 3px 10px;
                border-radius: 99px; font-size: 0.65rem; font-weight: 700; }}
-.badge-warn {{ background: #422006; color: #FCD34D; padding: 3px 10px;
+.badge-warn {{ background: rgba(66,32,6,0.8); color: #FCD34D; padding: 3px 10px;
                border-radius: 99px; font-size: 0.65rem; font-weight: 700; }}
 .page-title {{ font-size: 1.7rem; font-weight: 900; color: #E2E8F0; margin: 0; line-height: 1.1; }}
-.page-sub   {{ color: #64748B; font-size: 0.8rem; margin-top: 4px; }}
+.page-sub   {{ color: #94A3B8; font-size: 0.8rem; margin-top: 4px; }}
+.hero-section {{
+    background: linear-gradient(180deg, rgba(0,0,0,0.1) 0%, rgba(6,6,15,0.85) 100%);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    border-radius: 16px;
+    border: 1px solid rgba(255,255,255,0.07);
+    padding: 32px 36px 24px;
+    margin-bottom: 24px;
+    text-align: center;
+}}
+.hero-name {{
+    font-size: 3rem; font-weight: 900; color: #FFFFFF;
+    letter-spacing: -1px; line-height: 1; margin: 14px 0 6px;
+    text-shadow: 0 2px 20px rgba(0,0,0,0.6);
+}}
+.hero-sub {{
+    color: rgba(255,255,255,0.5); font-size: 0.85rem;
+    text-transform: uppercase; letter-spacing: 2px;
+}}
+.hero-kpi-row {{
+    display: flex; justify-content: center; gap: 40px; margin-top: 20px;
+}}
+.hero-kpi {{
+    text-align: center;
+}}
+.hero-kpi-val {{
+    font-size: 1.8rem; font-weight: 900; color: {ac};
+    line-height: 1;
+}}
+.hero-kpi-label {{
+    font-size: 0.6rem; color: rgba(255,255,255,0.45);
+    text-transform: uppercase; letter-spacing: 1.5px; margin-top: 4px;
+}}
 </style>"""
 
 
@@ -316,8 +420,6 @@ def generate_text_report(df, creator, channel_info, kpis, recs, dips) -> str:
         f"Avg Views/Day     : {kpis['avg_vpd']/1e6:.2f}M",
         f"Avg Engagement    : {kpis['avg_engagement']*100:.2f}%",
         f"Momentum Index    : {kpis['momentum']:.2f}x",
-        f"Hit Rate          : {kpis['hit_rate']*100:.0f}%",
-        f"Consistency Score : {kpis['consistency']*100:.0f}%",
         f"Posting Cadence   : {kpis['cadence']:.1f} videos/week",
         "",
         "TOP 5 VIDEOS (by Views/Day)",
@@ -380,15 +482,15 @@ with st.sidebar:
     creator = st.selectbox("**Creator**", list(CREATORS.keys()))
     slug = CREATORS[creator]["slug"]
     is_music = slug in MUSIC_ARTISTS
-    AC = accent(is_music)
+    channel_info = all_channel_info.get(slug, {"name": creator, "avatar": "", "banner": ""})
+    avatar_url = channel_info.get("avatar", "")
+    AC = extract_accent_color(avatar_url) if avatar_url else accent(is_music)
 
     st.divider()
     st.markdown("**Filters**")
 
     with st.spinner("Loading…"):
         df_raw, data_warnings = load_and_enrich(slug)
-
-    channel_info = all_channel_info.get(slug, {"name": creator, "avatar": ""})
     min_d = df_raw["published_at"].min().date()
     max_d = df_raw["published_at"].max().date()
 
@@ -434,61 +536,72 @@ if len(df_f) > 1:
     df_f = detect_video_anomalies(df_f)
 
 # ── Inject CSS ─────────────────────────────────────────────────────────────────
-st.markdown(build_css(AC), unsafe_allow_html=True)
+banner_url = channel_info.get("banner", "")
+st.markdown(build_css(AC, banner_url), unsafe_allow_html=True)
 
-# ── Page header ────────────────────────────────────────────────────────────────
-hcol1, hcol2 = st.columns([1, 11])
-with hcol1:
-    if channel_info.get("avatar"):
-        st.image(channel_info["avatar"], width=56)
-with hcol2:
-    suffix = ""
-    if fmt_filter != "All":
-        suffix += f" · {fmt_filter}"
-    if min_views > 0:
-        suffix += f" · ≥{min_views/1e6:.1f}M views"
-    st.markdown(
-        f'<div class="page-title">{channel_info.get("name", creator)}</div>'
-        f'<div class="page-sub">{len(df_f):,} videos · '
-        f'{date_range[0]} → {date_range[1]}{suffix}</div>',
-        unsafe_allow_html=True,
-    )
-
-st.markdown("<br>", unsafe_allow_html=True)
-
-if len(df_f) == 0:
-    st.warning("No videos match the current filters. Adjust the filters in the sidebar.")
-    st.stop()
-
-# ── KPI row 1: Core metrics ────────────────────────────────────────────────────
+# ── Hero section ───────────────────────────────────────────────────────────────
 kpis = kpi_summary(df_f)
 _, _, vpd_trend  = period_trend(df_f, "views_per_day")
 _, _, eng_trend  = period_trend(df_f, "engagement_rate")
 _, _, view_trend = period_trend(df_f, "view_count")
 
-cols = st.columns(4)
-kpi_data = [
-    ("TOTAL VIDEOS",    f"{kpis['total_videos']:,}",             "in selected period",   None),
-    ("AVG VIEWS",       f"{kpis['avg_views']/1e6:.1f}M",         "per video",            view_trend),
-    ("AVG VIEWS / DAY", f"{kpis['avg_vpd']/1e6:.2f}M",           "velocity",             vpd_trend),
-    ("AVG ENGAGEMENT",  f"{kpis['avg_engagement']*100:.2f}%",    "likes + comments",     eng_trend),
-]
-for col, (label, val, sub, trend) in zip(cols, kpi_data):
-    col.markdown(kpi_card(label, val, sub, trend), unsafe_allow_html=True)
+suffix = ""
+if fmt_filter != "All":
+    suffix += f" · {fmt_filter}"
+if min_views > 0:
+    suffix += f" · ≥{min_views/1e6:.1f}M views"
 
-st.markdown("<br>", unsafe_allow_html=True)
+hero_avatar = ""
+if channel_info.get("avatar"):
+    hero_avatar = (
+        f'<img src="{channel_info["avatar"]}" '
+        f'style="width:88px;height:88px;border-radius:50%;'
+        f'border:3px solid {AC};object-fit:cover;'
+        f'box-shadow:0 0 24px {AC}55;" />'
+    )
+
+hero_kpis = [
+    ("VIDEOS", f"{kpis['total_videos']:,}"),
+    ("AVG VIEWS", f"{kpis['avg_views']/1e6:.1f}M"),
+    ("VIEWS/DAY", f"{kpis['avg_vpd']/1e6:.2f}M"),
+    ("ENGAGEMENT", f"{kpis['avg_engagement']*100:.2f}%"),
+]
+hero_kpi_html = "".join(
+    f'<div class="hero-kpi">'
+    f'<div class="hero-kpi-val">{val}</div>'
+    f'<div class="hero-kpi-label">{label}</div>'
+    f'</div>'
+    for label, val in hero_kpis
+)
+
+st.markdown(
+    f'<div class="hero-section">'
+    f'{hero_avatar}'
+    f'<div class="hero-name">{channel_info.get("name", creator)}</div>'
+    f'<div class="hero-sub">{len(df_f):,} videos · {date_range[0]} → {date_range[1]}{suffix}</div>'
+    f'<div class="hero-kpi-row">{hero_kpi_html}</div>'
+    f'</div>',
+    unsafe_allow_html=True,
+)
+
+
+if len(df_f) == 0:
+    st.warning("No videos match the current filters. Adjust the filters in the sidebar.")
+    st.stop()
 
 # ── KPI row 2: Advanced metrics ────────────────────────────────────────────────
 momentum = kpis["momentum"]
 mom_color = "#22C55E" if momentum > 1.1 else ("#EF4444" if momentum < 0.85 else "#F59E0B")
 mom_label = "↑ Growing" if momentum > 1.1 else ("↓ Declining" if momentum < 0.85 else "→ Stable")
 
+viral_hit_rate = (df_f["views_per_day"] >= df_f["views_per_day"].mean() * 2).mean() * 100
 adv_cols = st.columns(4)
 adv_data = [
-    ("MOMENTUM INDEX", f"{momentum:.2f}x", f"{mom_label} (90-day)", mom_color),
-    ("HIT RATE",       f"{kpis['hit_rate']*100:.0f}%", "videos ≥ channel median", "#E2E8F0"),
-    ("CONSISTENCY",    f"{kpis['consistency']*100:.0f}%", "lower variance = higher",  "#E2E8F0"),
-    ("CADENCE",        f"{kpis['cadence']:.1f}/wk",      "avg videos per week",       "#E2E8F0"),
+    ("MOMENTUM INDEX",    f"{momentum:.2f}x",         f"{mom_label} (90-day)",        mom_color),
+    ("VIRAL HIT RATE",    f"{viral_hit_rate:.0f}%",   "videos > 2x channel avg",      AC),
+    ("CADENCE",           f"{kpis['cadence']:.1f}/wk","avg videos per week",           "#E2E8F0"),
+    ("COMMENT / LIKE",    f"{kpis.get('clr', df_f['comment_rate'].mean()/df_f['like_rate'].mean() if df_f['like_rate'].mean()>0 else 0):.2f}x",
+                          "fandom depth proxy",                                         "#E2E8F0"),
 ]
 for col, (label, val, sub, color) in zip(adv_cols, adv_data):
     col.markdown(adv_card(label, val, sub, color), unsafe_allow_html=True)
@@ -1026,18 +1139,22 @@ with tab6:
 
         # Head-to-head table
         st.markdown(f'<div class="sec-head">Head-to-Head KPIs</div>', unsafe_allow_html=True)
+        def viral_hit_rate(d):
+            threshold = d["views_per_day"].mean() * 2
+            return (d["views_per_day"] >= threshold).mean()
+
         hth = pd.DataFrame({
             "Metric": ["Videos","Avg Views","Avg Views/Day","Avg Engagement",
-                       "Momentum (90d)","Hit Rate","Cadence (vids/wk)","Avg Composite Score"],
+                       "Momentum (90d)","Viral Hit Rate (>2x avg)","Cadence (vids/wk)","Avg Composite Score"],
             creator_a: [f"{len(da):,}", f"{da['view_count'].mean()/1e6:.1f}M",
                         f"{da['views_per_day'].mean()/1e6:.2f}M",
                         f"{da['engagement_rate'].mean()*100:.2f}%",
-                        f"{_mom(da):.2f}x", f"{_hr(da)*100:.0f}%",
+                        f"{_mom(da):.2f}x", f"{viral_hit_rate(da)*100:.0f}%",
                         f"{_cad(da):.1f}", f"{da['composite_score'].mean():.1f}"],
             creator_b: [f"{len(db):,}", f"{db['view_count'].mean()/1e6:.1f}M",
                         f"{db['views_per_day'].mean()/1e6:.2f}M",
                         f"{db['engagement_rate'].mean()*100:.2f}%",
-                        f"{_mom(db):.2f}x", f"{_hr(db)*100:.0f}%",
+                        f"{_mom(db):.2f}x", f"{viral_hit_rate(db)*100:.0f}%",
                         f"{_cad(db):.1f}", f"{db['composite_score'].mean():.1f}"],
         })
         st.dataframe(hth, use_container_width=True, hide_index=True)
