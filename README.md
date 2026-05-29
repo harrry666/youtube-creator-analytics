@@ -6,6 +6,14 @@ An analytics dashboard for YouTube creator performance — built with live API d
 
 ---
 
+## Research Question
+
+**What content strategies and channel behaviors best predict sustainable view velocity — and how do top YouTube creators trade off reach versus community depth?**
+
+Hypothesis: high-cadence creators (iShowSpeed) maximize reach through volume; low-cadence creators (Mark Rober) maximize depth through production quality. No single creator dominates both axes simultaneously. The data covers 3,915 videos across 5 creators to test this.
+
+---
+
 ## What It Does
 
 This dashboard turns raw YouTube API data into answers that actually matter for creator teams. It answers the questions that count in creator economy analytics:

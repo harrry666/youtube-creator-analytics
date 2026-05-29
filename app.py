@@ -443,6 +443,26 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
 
 # ── TAB 1: Overview ────────────────────────────────────────────────────────────
 with tab1:
+    st.markdown(
+        """
+        <div style="background:#12122A;border-left:4px solid #FF0000;padding:14px 18px;
+                    border-radius:6px;margin-bottom:18px;">
+          <div style="color:#A0A0C0;font-size:0.75rem;letter-spacing:0.08em;
+                      text-transform:uppercase;margin-bottom:4px;">Research Question</div>
+          <div style="color:#F0F0FF;font-size:1.05rem;font-weight:600;line-height:1.5;">
+            What content strategies and channel behaviors best predict sustainable view velocity —
+            and how do top YouTube creators trade off <span style="color:#FF0000;">reach</span>
+            versus <span style="color:#1DB954;">community depth</span>?
+          </div>
+          <div style="color:#8888AA;font-size:0.82rem;margin-top:8px;">
+            Hypothesis: high-cadence creators (Speed) maximize reach via volume;
+            low-cadence creators (Rober) maximize depth via production quality.
+            No single creator dominates both axes simultaneously.
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     st.markdown(f'<div class="sec-head">Performance Leaderboard — Top {top_n} by Composite Score</div>',
                 unsafe_allow_html=True)
     lb = df_f.nlargest(top_n, "composite_score").copy()
