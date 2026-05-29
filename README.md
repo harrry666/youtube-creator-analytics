@@ -4,6 +4,8 @@ An analytics dashboard for YouTube creator performance — built with live API d
 
 **Live data from YouTube Data API v3.**
 
+🔗 **[Live Dashboard](https://youtube-creator-analytics-bpn8qc3pfwjgedrrd2ppw7.streamlit.app/)**
+
 ---
 
 ## Research Question
